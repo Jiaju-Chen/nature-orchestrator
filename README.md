@@ -1,83 +1,145 @@
 # NatureOrchestrator
 
-NatureOrchestrator is an agentic system for turning experiments, figures,
-results, literature, and reviewer feedback into Nature-level scientific
-manuscripts.
+NatureOrchestrator is an agentic system for evidence-grounded scientific
+manuscript writing. It turns structured research materials into manuscript
+sections through story planning, writing, specialist review, targeted
+refinement, polish, and audit.
 
 The project is not affiliated with Nature Portfolio or Springer Nature.
 "Nature-level" refers to the target quality bar: clear scientific narrative,
 strong figure-driven results, careful methods, calibrated claims, and rigorous
 review-driven revision.
 
-## Motivation
+## What This Repository Provides
 
-Most AI writing tools start from text. NatureOrchestrator starts from the
-research process: ideas, experiments, notebooks, plots, code outputs, evidence
-tables, citations, and coauthor comments. The goal is to coordinate specialized
-agents that can draft, critique, revise, and audit a manuscript section by
-section.
+NatureOrchestrator now has two layers:
 
-## Initial Components
+- Generic writing skill: a portable `skills/nature_writing/SKILL.md` and
+  `manuscript_workspace.v1` contract for users who want to organize their own
+  research materials.
+- NatureBench adapter: benchmark-facing runners for controlled evaluation on
+  NatureBench artifacts when those artifacts are available locally.
+
+Normal users do not need NatureBench data. NatureBench is an evaluation adapter,
+not the core input format.
+
+## Quickstart A: Generic Manuscript Workspace
+
+The generic workspace is the recommended entry point for new users. It uses only
+synthetic example materials and does not require API keys or downloaded papers.
+
+```bash
+python scripts/run_manuscript_workspace.py \
+  --workspace examples/minimal_manuscript_workspace/workspace.yaml \
+  --out outputs/examples/minimal_workspace \
+  --backend prompt-pack
+```
+
+This writes:
+
+- `prompt_pack/task_contract.yaml`
+- `prompt_pack/allowed_files.yaml`
+- `prompt_pack/forbidden_files.yaml`
+- `prompt_pack/*_prompt.md`
+- `context_pack/context.md`
+- `provenance.yaml`
+- `run_manifest.yaml`
+
+The `prompt-pack` backend prepares all artifacts without calling a model. Use it
+to inspect the contract, prompts, allowed context, and provenance before running
+a model-backed backend.
+
+## Generic Workspace Contract
+
+A minimal workspace looks like this:
+
+```yaml
+schema_version: nature_orchestrator.manuscript_workspace.v1
+project:
+  title: ""
+  target_style: nature_research_article
+  field: ""
+inputs:
+  research_question: inputs/research_question.md
+  methods: inputs/methods.md
+  results_notes: inputs/results_notes.md
+  figures: inputs/figures.yaml
+  references: inputs/references.bib
+  constraints: inputs/constraints.md
+outputs:
+  results: manuscript/results.tex
+  discussion: manuscript/discussion.tex
+  abstract_intro: manuscript/abstract_intro.tex
+  reviews: reviews/
+  decisions: decisions/
+  provenance: provenance.yaml
+policy:
+  evidence_only: true
+  allow_web: false
+  oracle_available: false
+```
+
+The public contract is stored at
+`skills/nature_writing/contracts/manuscript_workspace.yaml`.
+
+## Quickstart B: NatureBench Adapter
+
+Researchers with local NatureBench artifacts can use the benchmark adapter to
+prepare prompt packs from benchmark tasks:
+
+```bash
+python scripts/run_full_paper_batch.py \
+  --prepare-only \
+  --tasks-root <path-to-nature-bench-data-downloads> \
+  --out outputs/naturebench_prepare \
+  --run-id public_release_prepare_smoke \
+  --only-slug <naturebench-slug> \
+  --generators nature-orchestrator \
+  --image-mode benchmark_vlm \
+  --quiet-progress
+```
+
+For lower-level section experiments, the original module entry point remains:
+
+```bash
+PYTHONPATH=src python -m nature_orchestrator.run_task \
+  --task <path-to-naturebench-taskfile> \
+  --out outputs/runs/<slug>/results/prompt-pack \
+  --adapter prompt-pack \
+  --network-mode safe_web
+```
+
+Oracle audit is for benchmark evaluation only and should be opened after
+generation, never during writing.
+
+## Public Release Boundary
+
+Safe to publish:
+
+- skill docs and prompts
+- generic workspace contract
+- synthetic examples
+- prompt-pack runner
+- tests and adapter docs
+
+Do not commit:
+
+- `outputs/`
+- `vendor_baselines/`
+- downloaded publisher PDFs or HTML
+- downloaded NatureBench benchmark artifacts
+- generated manuscripts from real papers
+- run logs containing model output from real papers
+- `.env`, API keys, provider tokens, or local machine paths
+
+## Components
 
 - `section-writer`: draft abstract, introduction, results, discussion, methods,
   captions, and rebuttal text.
 - `figure-narrator`: turn figures and source data into results narratives.
-- `literature-scout`: retrieve and organize relevant prior work.
+- `literature-scout`: retrieve and organize relevant prior work when policy
+  permits.
 - `methods-auditor`: find missing experimental and computational details.
 - `scientific-reviewer`: review drafts and select sections for rewrite.
-- `oracle-auditor`: compare drafts with trusted reference manuscripts when a
-  benchmark task allows it.
-
-## Companion Benchmark
-
-Use `nature-bench` to evaluate whether manuscript-writing agents can construct
-complete high-impact papers from controlled evidence packs derived from Nature
-articles.
-
-## Benchmark-Driven Smoke Test
-
-Run a NatureBench section task with the deterministic adapter and post-generation
-oracle audit:
-
-```bash
-PYTHONPATH=src python -m nature_orchestrator.run_task \
-  --task ../nature-bench/data/downloads/<nature-group>/<slug>/benchmark/tasks/results.yaml \
-  --out outputs/runs/<slug>/results/fake \
-  --adapter fake \
-  --oracle-audit
-```
-
-The oracle audit is opened only after `final/target_section.tex` exists. Its V1
-metrics report token recall, generated-token precision, missing keywords,
-unsupported generated keywords, and heading-count gaps.
-
-For controlled-network experiments, use the safe-web task surface and keep the
-agent behind the retrieval guard:
-
-```bash
-PYTHONPATH=src python -m nature_orchestrator.run_task \
-  --task ../nature-bench/data/downloads/<nature-group>/<slug>/benchmark/tasks_safe_web/results.yaml \
-  --out outputs/runs/<slug>/results/safe-web-prompt \
-  --adapter prompt-pack \
-  --network-mode safe_web
-```
-
-This writes `retrieval/literature_pack.yaml`, `retrieval/retrieval_log.yaml`,
-and `retrieval/network_leakage_report.md`. The prompt pack tells model-backed
-agents to request literature through the orchestrator instead of using direct
-web access.
-
-For the primary Results-writing setting, use the figure-grounded variant:
-
-```bash
-PYTHONPATH=src python -m nature_orchestrator.run_task \
-  --task ../nature-bench/data/downloads/<nature-group>/<slug>/benchmark/tasks_safe_web/results_figure_grounded.yaml \
-  --out outputs/runs/<slug>/results-figure-grounded/prompt-pack \
-  --adapter prompt-pack \
-  --network-mode safe_web
-```
-
-This copies safe figure assets into `evidence/figures/`, expands captions in
-`context_pack/context.md`, and adds Results-specific prompt requirements around
-experiment purpose, key observations, controls/boundaries, claim roles, and
-Nature-style narrative progression. Patch-like snippets are deferred in V1.
+- `oracle-auditor`: compare drafts with trusted references only when a benchmark
+  task explicitly allows post-generation oracle evaluation.

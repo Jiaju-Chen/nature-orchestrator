@@ -1,0 +1,23 @@
+schema_version: nature_orchestrator.manuscript_workspace.v1
+project:
+  title: Synthetic treatment improves measurement stability under controlled stress
+  target_style: nature_research_article
+  field: synthetic_materials
+inputs:
+  research_question: inputs/research_question.md
+  methods: inputs/methods.md
+  results_notes: inputs/results_notes.md
+  figures: inputs/figures.yaml
+  references: inputs/references.bib
+  constraints: inputs/constraints.md
+outputs:
+  results: manuscript/results.tex
+  discussion: manuscript/discussion.tex
+  abstract_intro: manuscript/abstract_intro.tex
+  reviews: reviews/
+  decisions: decisions/
+  provenance: provenance.yaml
+policy:
+  evidence_only: true
+  allow_web: false
+  oracle_available: false
