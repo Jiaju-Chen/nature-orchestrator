@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -22,13 +23,167 @@ def write_text(path: Path, value: str) -> None:
 
 
 class NatureOrchestratorPipelineTests(unittest.TestCase):
+    def test_generic_workspace_contract_loads(self):
+        contract = yaml.safe_load(
+            (ROOT / "skills" / "nature_writing" / "contracts" / "manuscript_workspace.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual(contract["schema_version"], "nature_orchestrator.manuscript_workspace.v1")
+        self.assertEqual(contract["policy"]["evidence_only"], True)
+        self.assertEqual(contract["policy"]["oracle_available"], False)
+        self.assertIn("results_notes", contract["inputs"])
+
+    def test_generic_workspace_prompt_pack_excludes_outputs_and_oracle(self):
+        out_dir = Path(tempfile.mkdtemp()) / "generic-run"
+        workspace = ROOT / "examples" / "minimal_manuscript_workspace" / "workspace.yaml"
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "run_manuscript_workspace.py"),
+                "--workspace",
+                str(workspace),
+                "--out",
+                str(out_dir),
+                "--backend",
+                "prompt-pack",
+            ],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        self.assertIn(str(out_dir), completed.stdout)
+        allowed = yaml.safe_load((out_dir / "prompt_pack" / "allowed_files.yaml").read_text(encoding="utf-8"))
+        forbidden = yaml.safe_load((out_dir / "prompt_pack" / "forbidden_files.yaml").read_text(encoding="utf-8"))
+
+        allowed_text = json.dumps(allowed)
+        self.assertNotIn("oracle", allowed_text)
+        self.assertNotIn("manuscript/results.tex", allowed_text)
+        self.assertIn("oracle/", forbidden["forbidden_files"])
+        self.assertIn("manuscript/results.tex", forbidden["forbidden_files"])
+
+    def test_generic_workspace_prompt_pack_lists_only_allowed_files(self):
+        out_dir = Path(tempfile.mkdtemp()) / "generic-run"
+        workspace = ROOT / "examples" / "minimal_manuscript_workspace" / "workspace.yaml"
+
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "run_manuscript_workspace.py"),
+                "--workspace",
+                str(workspace),
+                "--out",
+                str(out_dir),
+                "--backend",
+                "prompt-pack",
+            ],
+            cwd=ROOT,
+            check=True,
+        )
+        allowed = yaml.safe_load((out_dir / "prompt_pack" / "allowed_files.yaml").read_text(encoding="utf-8"))
+
+        self.assertIn("inputs/research_question.md", allowed["allowed_files"])
+        self.assertIn("inputs/figures.yaml", allowed["allowed_files"])
+        self.assertIn("skills/nature_writing/versions/v0_1_generic_full_paper/prompts/writer.md", allowed["allowed_files"])
+        for value in allowed["allowed_files"]:
+            self.assertFalse(Path(value).is_absolute(), value)
+            self.assertNotIn("..", Path(value).parts, value)
+
+    def test_generic_workspace_prompt_pack_writes_provenance(self):
+        out_dir = Path(tempfile.mkdtemp()) / "generic-run"
+        workspace = ROOT / "examples" / "minimal_manuscript_workspace" / "workspace.yaml"
+
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "run_manuscript_workspace.py"),
+                "--workspace",
+                str(workspace),
+                "--out",
+                str(out_dir),
+                "--backend",
+                "prompt-pack",
+            ],
+            cwd=ROOT,
+            check=True,
+        )
+        provenance = yaml.safe_load((out_dir / "provenance.yaml").read_text(encoding="utf-8"))
+
+        self.assertEqual(provenance["schema_version"], "nature_orchestrator.provenance.v1")
+        self.assertEqual(provenance["skill_version"], "v0_1_generic_full_paper")
+        self.assertIn("workspace_hash", provenance)
+        self.assertIn("writer", provenance["prompt_hashes"])
+
+    def test_minimal_example_workspace_prepare_only(self):
+        out_dir = Path(tempfile.mkdtemp()) / "minimal-workspace"
+        workspace = ROOT / "examples" / "minimal_manuscript_workspace" / "workspace.yaml"
+
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "run_manuscript_workspace.py"),
+                "--workspace",
+                str(workspace),
+                "--out",
+                str(out_dir),
+                "--backend",
+                "prompt-pack",
+            ],
+            cwd=ROOT,
+            check=True,
+        )
+
+        self.assertTrue((out_dir / "prompt_pack" / "writer_prompt.md").exists())
+        self.assertTrue((out_dir / "context_pack" / "context.md").exists())
+        self.assertTrue((out_dir / "run_manifest.yaml").exists())
+
+    def test_naturebench_full_paper_adapter_still_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            task_path = self.make_results_figure_grounded_task(tmp_path)
+            tasks_root = task_path.parents[3]
+            out_dir = tmp_path / "outputs"
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "run_full_paper_batch.py"),
+                    "--prepare-only",
+                    "--tasks-root",
+                    str(tasks_root),
+                    "--out",
+                    str(out_dir),
+                    "--run-id",
+                    "adapter-smoke",
+                    "--only-slug",
+                    "case",
+                    "--generators",
+                    "nature-orchestrator",
+                    "--image-mode",
+                    "benchmark_vlm",
+                    "--quiet-progress",
+                ],
+                cwd=ROOT,
+                check=True,
+            )
+
+            summary = yaml.safe_load((out_dir / "adapter-smoke" / "summary.yaml").read_text(encoding="utf-8"))
+            self.assertEqual(summary["completed"], 1)
+            self.assertTrue(
+                (out_dir / "adapter-smoke" / "nature-orchestrator" / "case" / "prompt_pack" / "prompt.md").exists()
+            )
+
     def make_task(self, root: Path) -> Path:
         case = root / "case"
         benchmark = case / "benchmark"
         write_text(case / "renderers" / "custom_nature_template" / "sections" / "abstract_intro.tex", "Allowed abstract and intro.")
         write_text(case / "renderers" / "custom_nature_template" / "sections" / "discussion.tex", "Allowed discussion.")
         write_text(case / "renderers" / "custom_nature_template" / "sections" / "methods.tex", "Allowed methods.")
-        write_text(case / "renderers" / "custom_nature_template" / "sections" / "results.tex", "TARGET RESULTS SECRET.")
+        write_text(case / "renderers" / "custom_nature_template" / "sections" / "results.tex", "HIDDEN TARGET RESULTS.")
         write_text(case / "inputs" / "figures" / "figure-1.caption.txt", "Fig. 1 | A measured result with panels a and b.")
         write_text(case / "inputs" / "figures" / "figure-1.png", "fake png bytes")
         write_yaml(
@@ -49,7 +204,7 @@ class NatureOrchestratorPipelineTests(unittest.TestCase):
         )
         write_yaml(
             benchmark / "oracle" / "ground_truth_sections.yaml",
-            {"sections": {"results": {"text": "TARGET RESULTS SECRET."}}},
+            {"sections": {"results": {"text": "HIDDEN TARGET RESULTS."}}},
         )
         task = {
             "schema_version": "naturebench.task.v1",
@@ -192,7 +347,7 @@ class NatureOrchestratorPipelineTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertIn("Draft results section", final_text)
         self.assertIn("Allowed abstract and intro.", context_text)
-        self.assertNotIn("TARGET RESULTS SECRET", context_text)
+        self.assertNotIn("HIDDEN TARGET RESULTS", context_text)
         self.assertFalse((out_dir / "oracle_audit.yaml").exists())
 
     def test_prompt_pack_adapter_writes_allowed_and_forbidden_files(self):
@@ -243,7 +398,7 @@ class NatureOrchestratorPipelineTests(unittest.TestCase):
 
         self.assertEqual(audit["target_section"], "results")
         self.assertTrue(audit["ground_truth_available"])
-        self.assertIn("TARGET RESULTS SECRET", json.dumps(audit))
+        self.assertIn("HIDDEN TARGET RESULTS", json.dumps(audit))
 
     def test_oracle_audit_reports_v1_metrics(self):
         from nature_orchestrator.loader import load_task

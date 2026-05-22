@@ -1,0 +1,15 @@
+figures:
+  - id: figure-1
+    label: Fig. 1
+    title: Treatment A improves post-exposure stability
+    evidence:
+      - Mean normalized stability index was 0.62 for control samples.
+      - Mean normalized stability index was 0.81 for treatment A samples.
+      - The direction of effect was consistent across three synthetic batches.
+  - id: figure-2
+    label: Fig. 2
+    title: Failure counts remain comparable after treatment
+    evidence:
+      - Control group failure count was 3 of 24 samples.
+      - Treatment A failure count was 2 of 24 samples.
+      - The experiment was not powered to prove failure-rate superiority.
