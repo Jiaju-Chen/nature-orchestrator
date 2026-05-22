@@ -1,32 +1,30 @@
 # NatureOrchestrator
 
-NatureOrchestrator is an agentic system for evidence-grounded scientific
-manuscript writing. It turns structured research materials into manuscript
-sections through story planning, writing, specialist review, targeted
-refinement, polish, and audit.
+NatureOrchestrator is a research-writing toolkit for evidence-grounded
+scientific manuscripts. It organizes research materials into a controlled
+workspace, prepares model-readable writing tasks, and can run a generic
+full-paper drafting pipeline with review, revision, polish, and audit artifacts.
 
 The project is not affiliated with Nature Portfolio or Springer Nature.
 "Nature-level" refers to the target quality bar: clear scientific narrative,
-strong figure-driven results, careful methods, calibrated claims, and rigorous
-review-driven revision.
+figure-driven results, calibrated claims, careful methods, and rigorous review.
 
-## What This Repository Provides
+## Use Cases
 
-NatureOrchestrator now has two layers:
+- Draft manuscript sections from figures, methods notes, result summaries,
+  constraints, and references.
+- Run a generic no-oracle full-paper writing pipeline from a structured
+  workspace.
+- Prepare reproducible prompt packs with explicit allowed and forbidden context.
+- Evaluate benchmark tasks through the NatureBench adapter when local benchmark
+  artifacts are available.
 
-- Generic writing skill: a portable `skills/nature_writing/SKILL.md` and
-  `manuscript_workspace.v1` contract for users who want to organize their own
-  research materials.
-- NatureBench adapter: benchmark-facing runners for controlled evaluation on
-  NatureBench artifacts when those artifacts are available locally.
+## Quickstart
 
-Normal users do not need NatureBench data. NatureBench is an evaluation adapter,
-not the core input format.
+The synthetic example works without API keys, downloaded articles, or
+NatureBench data.
 
-## Quickstart A: Generic Manuscript Workspace
-
-The generic workspace is the recommended entry point for new users. It uses only
-synthetic example materials and does not require API keys or downloaded papers.
+Prepare a prompt pack:
 
 ```bash
 python scripts/run_manuscript_workspace.py \
@@ -35,21 +33,7 @@ python scripts/run_manuscript_workspace.py \
   --backend prompt-pack
 ```
 
-This writes:
-
-- `prompt_pack/task_contract.yaml`
-- `prompt_pack/allowed_files.yaml`
-- `prompt_pack/forbidden_files.yaml`
-- `prompt_pack/*_prompt.md`
-- `context_pack/context.md`
-- `provenance.yaml`
-- `run_manifest.yaml`
-
-The `prompt-pack` backend prepares all artifacts without calling a model. Use it
-to inspect the contract, prompts, allowed context, and provenance before running
-a model-backed backend.
-
-To run the generic full-paper auto pipeline with Codex:
+Run the same workspace through the automatic full-paper pipeline with Codex:
 
 ```bash
 python scripts/run_manuscript_workspace.py \
@@ -61,13 +45,23 @@ python scripts/run_manuscript_workspace.py \
   --max-reviewer-workers 3
 ```
 
-This runs story planning, drafting, parallel reviewers, blind decision, targeted
-refinement, polish, final audit, and provenance writing. Use `--backend mock`
-for a no-model smoke test of the same artifact structure.
+For a no-model smoke test of the same artifact structure, use:
 
-## Generic Workspace Contract
+```bash
+python scripts/run_manuscript_workspace.py \
+  --workspace examples/minimal_manuscript_workspace/workspace.yaml \
+  --out outputs/examples/minimal_workspace_auto \
+  --backend mock \
+  --mode auto \
+  --max-refiner-rounds 1 \
+  --max-reviewer-workers 3
+```
 
-A minimal workspace looks like this:
+## Manuscript Workspace
+
+The generic input format is
+`nature_orchestrator.manuscript_workspace.v1`. A workspace declares project
+metadata, allowed input files, output paths, and writing policy.
 
 ```yaml
 schema_version: nature_orchestrator.manuscript_workspace.v1
@@ -98,15 +92,61 @@ policy:
 The public contract is stored at
 `skills/nature_writing/contracts/manuscript_workspace.yaml`.
 
-## Quickstart B: NatureBench Adapter
+## Pipeline
 
-Researchers with local NatureBench artifacts can use the benchmark adapter to
-prepare prompt packs from benchmark tasks:
+In `--mode auto`, the generic runner performs:
+
+```text
+story blueprint
+-> writer draft_000
+-> parallel reviewers: evidence, story, citation
+-> blind decision
+-> targeted refiner rounds
+-> polisher
+-> final audit
+```
+
+The run writes structured artifacts under the output directory, including:
+
+- `prompt_pack/`
+- `context_pack/context.md`
+- `story/story_blueprint.yaml`
+- `drafts/`
+- `reviews/`
+- `decisions/`
+- `final/manuscript.tex`
+- `audits/final_audit.yaml`
+- `provenance.yaml`
+
+The default public pipeline is no-oracle: it must judge drafts against the
+workspace evidence and rubrics, not against a hidden reference manuscript.
+
+## Skill Files
+
+The agent-readable skill entry point is:
+
+```text
+skills/nature_writing/SKILL.md
+```
+
+The current full-paper pipeline version is:
+
+```text
+skills/nature_writing/versions/v0_2_generic_full_paper_pipeline/
+```
+
+Version `v0_1_generic_full_paper` is retained as the earlier prompt-pack
+snapshot.
+
+## NatureBench Adapter
+
+NatureBench is supported as a benchmark adapter, not as the only input format.
+Researchers with local NatureBench artifacts can prepare benchmark prompt packs:
 
 ```bash
 python scripts/run_full_paper_batch.py \
   --prepare-only \
-  --tasks-root <path-to-nature-bench-data-downloads> \
+  --tasks-root <path-to-nature-bench-downloads> \
   --out outputs/naturebench_prepare \
   --run-id public_release_prepare_smoke \
   --only-slug <naturebench-slug> \
@@ -115,28 +155,18 @@ python scripts/run_full_paper_batch.py \
   --quiet-progress
 ```
 
-For lower-level section experiments, the original module entry point remains:
-
-```bash
-PYTHONPATH=src python -m nature_orchestrator.run_task \
-  --task <path-to-naturebench-taskfile> \
-  --out outputs/runs/<slug>/results/prompt-pack \
-  --adapter prompt-pack \
-  --network-mode safe_web
-```
-
 Oracle audit is for benchmark evaluation only and should be opened after
-generation, never during writing.
+generation, never during normal drafting.
 
-## Public Release Boundary
+## Public Data Boundary
 
 Safe to publish:
 
-- skill docs and prompts
-- generic workspace contract
+- skill documentation and prompts
+- generic workspace contracts
 - synthetic examples
-- prompt-pack runner
-- tests and adapter docs
+- runner scripts
+- tests and adapter documentation
 
 Do not commit:
 
@@ -148,14 +178,19 @@ Do not commit:
 - run logs containing model output from real papers
 - `.env`, API keys, provider tokens, or local machine paths
 
-## Components
+## Current Limitations
 
-- `section-writer`: draft abstract, introduction, results, discussion, methods,
-  captions, and rebuttal text.
-- `figure-narrator`: turn figures and source data into results narratives.
-- `literature-scout`: retrieve and organize relevant prior work when policy
-  permits.
-- `methods-auditor`: find missing experimental and computational details.
-- `scientific-reviewer`: review drafts and select sections for rewrite.
-- `oracle-auditor`: compare drafts with trusted references only when a benchmark
-  task explicitly allows post-generation oracle evaluation.
+- The generic pipeline expects users to provide structured research materials;
+  it does not yet parse arbitrary paper folders automatically.
+- The public API backend is reserved for a future release.
+- Section-specific specialist pipelines are not yet exposed in the generic
+  runner.
+- The quality of `--backend codex --mode auto` depends on the local Codex CLI
+  environment and model access.
+
+## Verification
+
+```bash
+python -m py_compile scripts/run_manuscript_workspace.py scripts/run_full_paper_batch.py
+python -m unittest tests/test_pipeline.py -v
+```
