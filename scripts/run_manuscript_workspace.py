@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import subprocess
 import sys
@@ -13,7 +14,8 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_DIR = ROOT / "skills" / "nature_writing" / "versions" / "v0_1_generic_full_paper"
+SKILL_VERSION = "v0_2_generic_full_paper_pipeline"
+SKILL_DIR = ROOT / "skills" / "nature_writing" / "versions" / SKILL_VERSION
 PROMPT_FILES = {
     "writer": SKILL_DIR / "prompts" / "writer.md",
     "reviewer": SKILL_DIR / "prompts" / "reviewer.md",
@@ -189,7 +191,7 @@ def write_prompt_pack(workspace_path: Path, out_dir: Path, backend: str) -> dict
             "schema_version": "nature_orchestrator.task_contract.v1",
             "workspace_schema": workspace["schema_version"],
             "workspace": str(workspace_path),
-            "skill_version": "v0_1_generic_full_paper",
+            "skill_version": SKILL_VERSION,
             "backend": backend,
             "allowed_context": allowed_files,
             "forbidden_context": forbidden_files,
@@ -204,7 +206,7 @@ def write_prompt_pack(workspace_path: Path, out_dir: Path, backend: str) -> dict
         "workspace_path": str(workspace_path),
         "workspace_hash": sha256_file(workspace_path),
         "context_hash": context_hash,
-        "skill_version": "v0_1_generic_full_paper",
+        "skill_version": SKILL_VERSION,
         "backend": backend,
         "input_hashes": {rel: sha256_file(path) for rel, path in input_files},
         "prompt_hashes": prompt_hashes,
@@ -221,26 +223,281 @@ def write_prompt_pack(workspace_path: Path, out_dir: Path, backend: str) -> dict
             "status": "prompt_pack_ready",
             "workspace": str(workspace_path),
             "backend": backend,
-            "skill_version": "v0_1_generic_full_paper",
+            "mode": "prompt-pack",
+            "skill_version": SKILL_VERSION,
         },
     )
-    return {"workspace": workspace, "provenance": provenance}
+    return {"workspace": workspace, "provenance": provenance, "context": context}
+
+
+def run_codex_prompt(out_dir: Path, prompt: str, log_prefix: str, timeout: int) -> int:
+    command = ["codex", "-a", "never", "exec", "--ephemeral", "--sandbox", "workspace-write", "-C", str(out_dir), prompt]
+    completed = subprocess.run(command, cwd=out_dir, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    write_text(out_dir / "logs" / f"{log_prefix}.stdout.log", completed.stdout)
+    write_text(out_dir / "logs" / f"{log_prefix}.stderr.log", completed.stderr)
+    return completed.returncode
 
 
 def run_codex(out_dir: Path, timeout: int) -> int:
     prompt = (out_dir / "prompt_pack" / "master_prompt.md").read_text(encoding="utf-8")
-    command = ["codex", "-a", "never", "exec", "--ephemeral", "--sandbox", "workspace-write", "-C", str(out_dir), prompt]
-    completed = subprocess.run(command, cwd=out_dir, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
-    write_text(out_dir / "logs" / "codex.stdout.log", completed.stdout)
-    write_text(out_dir / "logs" / "codex.stderr.log", completed.stderr)
-    return completed.returncode
+    return run_codex_prompt(out_dir, prompt, "codex", timeout)
+
+
+def mock_story_blueprint(workspace: dict[str, Any]) -> dict[str, Any]:
+    project = workspace.get("project") or {}
+    return {
+        "schema_version": "nature_orchestrator.story_blueprint.v1",
+        "title": project.get("title", ""),
+        "central_question": "Whether the provided evidence supports a coherent scientific manuscript.",
+        "evidence_chain": [
+            "research question establishes the manuscript problem",
+            "methods define the experimental boundary",
+            "results notes and figures define supported findings",
+            "constraints define limitations and claim boundaries",
+        ],
+        "section_plan": {
+            "results": "Report supported observations in figure-driven order.",
+            "discussion": "State interpretation, limitations, and implications without adding new findings.",
+            "abstract_intro": "Frame the problem, gap, approach, supported findings, and contribution.",
+        },
+    }
+
+
+def mock_draft(workspace: dict[str, Any], context: str, round_index: int = 0) -> str:
+    project = workspace.get("project") or {}
+    title = project.get("title") or "Evidence-grounded manuscript"
+    suffix = "" if round_index == 0 else "\n% Targeted refinement applied to reviewer requests.\n"
+    return (
+        f"% Draft round {round_index}\n"
+        f"\\section{{Results}}\n"
+        "Treatment A increased the normalized stability index under condition C, "
+        "with the stated effect supported by Fig. 1 and the provided results notes. "
+        "The failure counts remained comparable between groups as summarized in Fig. 2.\n\n"
+        "\\section{Discussion}\n"
+        f"These synthetic data support the claim that {title} under the tested condition. "
+        "The evidence remains limited by sample size, the synthetic setting, and the absence "
+        "of long-term durability testing.\n\n"
+        "\\begin{abstract}\n"
+        "A synthetic treatment study tested whether treatment A improves measurement B stability "
+        "under condition C. Across the provided batches, treatment A increased the normalized "
+        "stability index without a detectable increase in the pre-specified failure count. "
+        "The findings support a constrained, evidence-grounded stability claim while leaving "
+        "long-term durability and field deployment unresolved.\n"
+        "\\end{abstract}\n\n"
+        "\\section{Introduction}\n"
+        "Stability under controlled stress is a common bottleneck in synthetic materials testing. "
+        "The provided workspace motivates a focused test of whether treatment A improves measurement "
+        "B under condition C while preserving failure-rate safety. This manuscript therefore builds "
+        "a figure-grounded argument from the declared methods, results notes, and constraints.\n"
+        f"{suffix}"
+    )
+
+
+def mock_review(role: str, draft: str) -> dict[str, Any]:
+    return {
+        "schema_version": "nature_orchestrator.review.v1",
+        "reviewer": role,
+        "status": "pass",
+        "accepted_by_reviewers": True,
+        "scores": {
+            "evidence": 4,
+            "story": 4,
+            "citations": 4,
+            "methods": 4,
+            "clarity": 4,
+            "finalization": 4,
+        },
+        "blocking_issues": [],
+        "required_revisions": [],
+        "optional_suggestions": [f"{role} reviewer found no blocking issue in mock mode."],
+    }
+
+
+def decide_from_reviews(reviews: list[dict[str, Any]], round_index: int, max_refiner_rounds: int) -> dict[str, Any]:
+    blocking = [
+        issue
+        for review in reviews
+        for issue in (review.get("blocking_issues") or review.get("required_revisions") or [])
+    ]
+    if blocking and round_index < max_refiner_rounds:
+        decision = "revise"
+    elif round_index == 0 and max_refiner_rounds > 0:
+        decision = "polish"
+    else:
+        decision = "finalize"
+    return {
+        "schema_version": "nature_orchestrator.decision.v1",
+        "round": round_index,
+        "decision": decision,
+        "reasons": ["parallel reviewers completed", "no oracle was used", "evidence-only policy remained active"],
+        "required_next_actions": blocking,
+    }
+
+
+def write_final_audit(out_dir: Path, final_path: Path, reviews: list[dict[str, Any]], workspace: dict[str, Any]) -> dict[str, Any]:
+    audit = {
+        "schema_version": "nature_orchestrator.final_audit.v1",
+        "status": "pass" if all(review.get("status") == "pass" for review in reviews) else "needs_review",
+        "oracle_used": False,
+        "evidence_only": bool((workspace.get("policy") or {}).get("evidence_only")),
+        "final_path": str(final_path.relative_to(out_dir)),
+        "checks": {
+            "parallel_reviewers_completed": True,
+            "final_manuscript_exists": final_path.exists(),
+            "forbidden_oracle_mode": not bool((workspace.get("policy") or {}).get("oracle_available")),
+        },
+    }
+    write_yaml(out_dir / "final" / "audit.yaml", audit)
+    return audit
+
+
+def update_output_hashes(out_dir: Path, paths: list[Path]) -> None:
+    provenance_path = out_dir / "provenance.yaml"
+    provenance = read_yaml(provenance_path)
+    output_hashes = provenance.setdefault("output_hashes", {})
+    for path in paths:
+        if path.exists() and path.is_file():
+            output_hashes[str(path.relative_to(out_dir))] = sha256_file(path)
+    write_yaml(provenance_path, provenance)
+    declared = read_yaml(out_dir / "prompt_pack" / "task_contract.yaml").get("outputs", {}).get("provenance")
+    if declared:
+        write_yaml(out_dir / declared, provenance)
+
+
+def run_mock_auto(out_dir: Path, workspace: dict[str, Any], context: str, max_refiner_rounds: int, max_reviewer_workers: int) -> dict[str, Any]:
+    blueprint = mock_story_blueprint(workspace)
+    write_yaml(out_dir / "story" / "story_blueprint.yaml", blueprint)
+    draft_path = out_dir / "drafts" / "draft_000.tex"
+    write_text(draft_path, mock_draft(workspace, context, 0))
+
+    reviewer_roles = ["evidence_reviewer", "story_reviewer", "citation_reviewer"]
+    with ThreadPoolExecutor(max_workers=max(1, min(max_reviewer_workers, len(reviewer_roles)))) as pool:
+        reviews = list(pool.map(lambda role: mock_review(role, draft_path.read_text(encoding="utf-8")), reviewer_roles))
+    for review in reviews:
+        write_yaml(out_dir / "reviews" / "round_000" / f"{review['reviewer']}.yaml", review)
+
+    decision = decide_from_reviews(reviews, 0, max_refiner_rounds)
+    write_yaml(out_dir / "decisions" / "decision_000.yaml", decision)
+
+    current_draft = draft_path
+    if decision["decision"] in {"revise", "polish"} and max_refiner_rounds > 0:
+        refined_path = out_dir / "drafts" / "draft_001.tex"
+        write_text(refined_path, mock_draft(workspace, context, 1))
+        current_draft = refined_path
+
+    final_path = out_dir / "final" / "manuscript.tex"
+    write_text(final_path, current_draft.read_text(encoding="utf-8"))
+    audit = write_final_audit(out_dir, final_path, reviews, workspace)
+    update_output_hashes(
+        out_dir,
+        [
+            out_dir / "story" / "story_blueprint.yaml",
+            draft_path,
+            current_draft,
+            final_path,
+            out_dir / "final" / "audit.yaml",
+        ],
+    )
+    result = {
+        "schema_version": "nature_orchestrator.generic_run.v1",
+        "status": "completed",
+        "mode": "auto",
+        "backend": "mock",
+        "skill_version": SKILL_VERSION,
+        "reviewer_workers": max_reviewer_workers,
+        "final_path": str(final_path),
+        "audit_status": audit["status"],
+    }
+    write_yaml(out_dir / "run_manifest.yaml", result)
+    return result
+
+
+def codex_stage_prompt(stage: str, output_path: str, extra: str = "") -> str:
+    return (
+        f"Read `context_pack/context.md`, `prompt_pack/allowed_files.yaml`, "
+        f"`prompt_pack/forbidden_files.yaml`, and `prompt_pack/{stage}_prompt.md`.\n"
+        f"Write the requested {stage} artifact to `{output_path}`.\n"
+        "Use no oracle/reference manuscript. Do not inspect forbidden files.\n"
+        f"{extra}\n"
+    )
+
+
+def run_codex_auto(out_dir: Path, workspace: dict[str, Any], max_refiner_rounds: int, max_reviewer_workers: int, timeout: int) -> dict[str, Any]:
+    stages = [
+        ("writer", "story/story_blueprint.yaml", "First write a compact YAML story blueprint."),
+        ("writer", "drafts/draft_000.tex", "Then write the full manuscript draft with Results, Discussion, Abstract, and Introduction."),
+    ]
+    for index, (stage, output, extra) in enumerate(stages):
+        code = run_codex_prompt(out_dir, codex_stage_prompt(stage, output, extra), f"{index:02d}_{stage}", timeout)
+        if code != 0:
+            raise SystemExit(code)
+
+    reviewer_roles = ["evidence_reviewer", "story_reviewer", "citation_reviewer"]
+
+    def run_reviewer(role: str) -> dict[str, Any]:
+        output = f"reviews/round_000/{role}.yaml"
+        prompt = codex_stage_prompt(
+            "reviewer",
+            output,
+            f"Act as `{role}`. Review `drafts/draft_000.tex` and write strict structured YAML.",
+        )
+        code = run_codex_prompt(out_dir, prompt, f"review_{role}", timeout)
+        if code != 0:
+            return {"reviewer": role, "status": "fail", "blocking_issues": [f"codex exited {code}"]}
+        path = out_dir / output
+        return read_yaml(path) if path.exists() else {"reviewer": role, "status": "fail", "blocking_issues": ["missing review output"]}
+
+    with ThreadPoolExecutor(max_workers=max(1, min(max_reviewer_workers, len(reviewer_roles)))) as pool:
+        reviews = list(pool.map(run_reviewer, reviewer_roles))
+    decision = decide_from_reviews(reviews, 0, max_refiner_rounds)
+    write_yaml(out_dir / "decisions" / "decision_000.yaml", decision)
+
+    current_draft = out_dir / "drafts" / "draft_000.tex"
+    if decision["decision"] in {"revise", "polish"} and max_refiner_rounds > 0:
+        output = "drafts/draft_001.tex"
+        code = run_codex_prompt(
+            out_dir,
+            codex_stage_prompt("refiner", output, "Use reviewer reports and `decisions/decision_000.yaml` for targeted refinement."),
+            "refiner_001",
+            timeout,
+        )
+        if code != 0:
+            raise SystemExit(code)
+        current_draft = out_dir / output
+
+    final_path = out_dir / "final" / "manuscript.tex"
+    code = run_codex_prompt(
+        out_dir,
+        codex_stage_prompt("polisher", "final/manuscript.tex", f"Polish `{current_draft.relative_to(out_dir)}` without adding new evidence."),
+        "polisher",
+        timeout,
+    )
+    if code != 0:
+        raise SystemExit(code)
+    audit = write_final_audit(out_dir, final_path, reviews, workspace)
+    update_output_hashes(out_dir, [final_path, out_dir / "final" / "audit.yaml"])
+    result = {
+        "schema_version": "nature_orchestrator.generic_run.v1",
+        "status": "completed" if final_path.exists() else "failed",
+        "mode": "auto",
+        "backend": "codex",
+        "skill_version": SKILL_VERSION,
+        "reviewer_workers": max_reviewer_workers,
+        "final_path": str(final_path),
+        "audit_status": audit["status"],
+    }
+    write_yaml(out_dir / "run_manifest.yaml", result)
+    return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prepare or run a generic Nature writing manuscript workspace.")
     parser.add_argument("--workspace", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--backend", choices=["prompt-pack", "codex", "api"], default="prompt-pack")
+    parser.add_argument("--backend", choices=["prompt-pack", "codex", "api", "mock"], default="prompt-pack")
+    parser.add_argument("--mode", choices=["prepare", "auto"], default="prepare")
+    parser.add_argument("--max-refiner-rounds", type=int, default=2)
+    parser.add_argument("--max-reviewer-workers", type=int, default=3)
     parser.add_argument("--codex-timeout", type=int, default=1800)
     args = parser.parse_args()
 
@@ -249,8 +506,15 @@ def main() -> int:
 
     out_dir = args.out.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    write_prompt_pack(args.workspace, out_dir, args.backend)
-    if args.backend == "codex":
+    prepared = write_prompt_pack(args.workspace, out_dir, args.backend)
+    if args.mode == "auto":
+        if args.backend == "mock":
+            run_mock_auto(out_dir, prepared["workspace"], prepared["context"], args.max_refiner_rounds, args.max_reviewer_workers)
+        elif args.backend == "codex":
+            run_codex_auto(out_dir, prepared["workspace"], args.max_refiner_rounds, args.max_reviewer_workers, args.codex_timeout)
+        else:
+            raise SystemExit("--mode auto requires --backend codex or --backend mock.")
+    elif args.backend == "codex":
         return run_codex(out_dir, args.codex_timeout)
     print(out_dir)
     return 0

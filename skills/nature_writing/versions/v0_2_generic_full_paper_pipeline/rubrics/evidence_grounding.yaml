@@ -1,0 +1,14 @@
+schema_version: nature_orchestrator.rubric.v1
+name: evidence_grounding
+scores:
+  5: Every empirical claim is traceable to allowed inputs; no unsupported numbers, figures, citations, or mechanisms.
+  4: Claims are mostly grounded; minor specificity or traceability issues remain.
+  3: Main claims are grounded but several details need support or removal.
+  2: Important claims exceed the evidence or blur unsupported interpretation with findings.
+  1: Draft repeatedly invents or imports evidence not present in the workspace.
+blocking_conditions:
+  - invented numerical result
+  - invented figure or table reference
+  - citation key absent from references
+  - hidden oracle/reference content used during drafting
+  - claim contradicts methods or constraints

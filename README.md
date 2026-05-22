@@ -49,6 +49,22 @@ The `prompt-pack` backend prepares all artifacts without calling a model. Use it
 to inspect the contract, prompts, allowed context, and provenance before running
 a model-backed backend.
 
+To run the generic full-paper auto pipeline with Codex:
+
+```bash
+python scripts/run_manuscript_workspace.py \
+  --workspace examples/minimal_manuscript_workspace/workspace.yaml \
+  --out outputs/examples/minimal_workspace_auto \
+  --backend codex \
+  --mode auto \
+  --max-refiner-rounds 2 \
+  --max-reviewer-workers 3
+```
+
+This runs story planning, drafting, parallel reviewers, blind decision, targeted
+refinement, polish, final audit, and provenance writing. Use `--backend mock`
+for a no-model smoke test of the same artifact structure.
+
 ## Generic Workspace Contract
 
 A minimal workspace looks like this:

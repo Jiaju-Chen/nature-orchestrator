@@ -41,6 +41,7 @@ The preferred input is a `nature_orchestrator.manuscript_workspace.v1`
 workspace. See:
 
 - `contracts/manuscript_workspace.yaml`
+- `versions/v0_2_generic_full_paper_pipeline/contracts/manuscript_workspace.yaml`
 - `versions/v0_1_generic_full_paper/contracts/manuscript_workspace.yaml`
 
 The workspace declares:
@@ -57,6 +58,24 @@ audit.
 
 ## Workflow
 
+If the user has already prepared a manuscript workspace and asks to write the
+paper, run the auto pipeline instead of only giving advice:
+
+```bash
+python scripts/run_manuscript_workspace.py \
+  --workspace <path-to-workspace.yaml> \
+  --out outputs/manuscript_auto \
+  --backend codex \
+  --mode auto \
+  --max-refiner-rounds 2 \
+  --max-reviewer-workers 3
+```
+
+For smoke tests without a model backend, use `--backend mock`. For preparation
+only, use `--backend prompt-pack` without `--mode auto`.
+
+The auto pipeline runs:
+
 1. Story planning: identify the central question, evidence chain, section roles,
    claim boundaries, and likely reader objections.
 2. Results writing: convert figure and result notes into a sequence of supported
@@ -66,8 +85,8 @@ audit.
    limitations, implications, and next questions without overselling.
 4. Abstract and introduction writing: state the problem, gap, approach, core
    findings, and contribution with calibrated specificity.
-5. Specialist review: separately check evidence grounding, story quality,
-   citation safety, methods consistency, and finalization readiness.
+5. Parallel specialist review: separately check evidence grounding, story
+   quality, citation safety, methods consistency, and finalization readiness.
 6. Blind decision: decide whether to revise, polish, or finalize without using
    an oracle manuscript.
 7. Targeted refinement: revise only the issues identified by reviewers or

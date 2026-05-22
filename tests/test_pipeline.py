@@ -88,7 +88,10 @@ class NatureOrchestratorPipelineTests(unittest.TestCase):
 
         self.assertIn("inputs/research_question.md", allowed["allowed_files"])
         self.assertIn("inputs/figures.yaml", allowed["allowed_files"])
-        self.assertIn("skills/nature_writing/versions/v0_1_generic_full_paper/prompts/writer.md", allowed["allowed_files"])
+        self.assertIn(
+            "skills/nature_writing/versions/v0_2_generic_full_paper_pipeline/prompts/writer.md",
+            allowed["allowed_files"],
+        )
         for value in allowed["allowed_files"]:
             self.assertFalse(Path(value).is_absolute(), value)
             self.assertNotIn("..", Path(value).parts, value)
@@ -114,7 +117,7 @@ class NatureOrchestratorPipelineTests(unittest.TestCase):
         provenance = yaml.safe_load((out_dir / "provenance.yaml").read_text(encoding="utf-8"))
 
         self.assertEqual(provenance["schema_version"], "nature_orchestrator.provenance.v1")
-        self.assertEqual(provenance["skill_version"], "v0_1_generic_full_paper")
+        self.assertEqual(provenance["skill_version"], "v0_2_generic_full_paper_pipeline")
         self.assertIn("workspace_hash", provenance)
         self.assertIn("writer", provenance["prompt_hashes"])
 
@@ -140,6 +143,58 @@ class NatureOrchestratorPipelineTests(unittest.TestCase):
         self.assertTrue((out_dir / "prompt_pack" / "writer_prompt.md").exists())
         self.assertTrue((out_dir / "context_pack" / "context.md").exists())
         self.assertTrue((out_dir / "run_manifest.yaml").exists())
+
+    def test_minimal_example_workspace_auto_mock_writes_full_pipeline_artifacts(self):
+        out_dir = Path(tempfile.mkdtemp()) / "minimal-workspace-auto"
+        workspace = ROOT / "examples" / "minimal_manuscript_workspace" / "workspace.yaml"
+
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "run_manuscript_workspace.py"),
+                "--workspace",
+                str(workspace),
+                "--out",
+                str(out_dir),
+                "--backend",
+                "mock",
+                "--mode",
+                "auto",
+                "--max-refiner-rounds",
+                "1",
+                "--max-reviewer-workers",
+                "3",
+            ],
+            cwd=ROOT,
+            check=True,
+        )
+
+        run_manifest = yaml.safe_load((out_dir / "run_manifest.yaml").read_text(encoding="utf-8"))
+        decision = yaml.safe_load((out_dir / "decisions" / "decision_000.yaml").read_text(encoding="utf-8"))
+        final_text = (out_dir / "final" / "manuscript.tex").read_text(encoding="utf-8")
+        provenance = yaml.safe_load((out_dir / "provenance.yaml").read_text(encoding="utf-8"))
+
+        self.assertEqual(run_manifest["status"], "completed")
+        self.assertEqual(run_manifest["mode"], "auto")
+        self.assertEqual(decision["decision"], "polish")
+        self.assertTrue((out_dir / "story" / "story_blueprint.yaml").exists())
+        self.assertTrue((out_dir / "drafts" / "draft_000.tex").exists())
+        self.assertTrue((out_dir / "drafts" / "draft_001.tex").exists())
+        self.assertTrue((out_dir / "reviews" / "round_000" / "evidence_reviewer.yaml").exists())
+        self.assertTrue((out_dir / "reviews" / "round_000" / "story_reviewer.yaml").exists())
+        self.assertTrue((out_dir / "reviews" / "round_000" / "citation_reviewer.yaml").exists())
+        self.assertTrue((out_dir / "final" / "audit.yaml").exists())
+        self.assertIn("\\section{Results}", final_text)
+        self.assertIn("\\section{Discussion}", final_text)
+        self.assertIn("\\begin{abstract}", final_text)
+        self.assertIn("final/manuscript.tex", provenance["output_hashes"])
+
+    def test_nature_writing_skill_mentions_auto_pipeline_command(self):
+        skill_text = (ROOT / "skills" / "nature_writing" / "SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("run_manuscript_workspace.py", skill_text)
+        self.assertIn("--mode auto", skill_text)
+        self.assertIn("--max-reviewer-workers", skill_text)
 
     def test_naturebench_full_paper_adapter_still_works(self):
         with tempfile.TemporaryDirectory() as tmp:
