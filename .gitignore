@@ -13,6 +13,8 @@ data/raw/
 data/downloads/
 artifacts/
 outputs/
+docs/cases/**/generated/
+docs/cases/**/ground_truth/
+docs/cases/**/private_artifacts/
 .env
 .env.*
-

@@ -14,18 +14,19 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_VERSION = "v0_2_generic_full_paper_pipeline"
-SKILL_DIR = ROOT / "skills" / "nature_writing" / "versions" / SKILL_VERSION
+SKILL_VERSION = "nature_writing_current"
+SKILL_DIR = ROOT / "skills" / "nature_writing"
 PROMPT_FILES = {
-    "writer": SKILL_DIR / "prompts" / "writer.md",
-    "reviewer": SKILL_DIR / "prompts" / "reviewer.md",
-    "refiner": SKILL_DIR / "prompts" / "refiner.md",
-    "polisher": SKILL_DIR / "prompts" / "polisher.md",
-    "orchestrator": SKILL_DIR / "prompts" / "orchestrator.md",
+    "writer": SKILL_DIR / "tasks" / "full_paper_writing.md",
+    "reviewer": SKILL_DIR / "prompts" / "cross_section_reviewer.md",
+    "refiner": SKILL_DIR / "methods" / "write_review_and_refine.md",
+    "polisher": SKILL_DIR / "prompts" / "final_polisher.md",
+    "orchestrator": SKILL_DIR / "SKILL.md",
 }
 RUBRIC_FILES = [
-    SKILL_DIR / "rubrics" / "evidence_grounding.yaml",
-    SKILL_DIR / "rubrics" / "story_quality.yaml",
+    SKILL_DIR / "rubrics" / "section_reviewer_rubric.yaml",
+    SKILL_DIR / "rubrics" / "cross_section_rubric.yaml",
+    SKILL_DIR / "rubrics" / "supervisor_rubric.yaml",
 ]
 
 
@@ -502,7 +503,10 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.backend == "api":
-        raise SystemExit("The api backend is planned but not implemented in v0.1.")
+        raise SystemExit(
+            "The generic manuscript-workspace API backend is not implemented. "
+            "Use the section/full-paper NatureBench runners for API agent execution."
+        )
 
     out_dir = args.out.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)

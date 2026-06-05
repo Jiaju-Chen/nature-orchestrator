@@ -1,0 +1,40 @@
+schema_version: nature_orchestrator.cross_section_rubric.v1
+pass_threshold: 4.2
+scores:
+  results_support:
+    scale: 1-5
+    high: Abstract, Introduction and Discussion claims are visibly supported by Results.
+    low: Later sections promise or interpret facts absent from Results.
+  cross_section_consistency:
+    scale: 1-5
+    high: Values, directions, terminology, methods and boundaries match across sections.
+    low: Sections contradict or drift from each other.
+  section_role_separation:
+    scale: 1-5
+    high: Results, Discussion, Introduction and Abstract each perform distinct roles.
+    low: Introduction becomes Results, Discussion adds new results, or Abstract overpromises.
+  repetition_control:
+    scale: 1-5
+    high: Exact anchors are most detailed in Results and compressed elsewhere.
+    low: Evidence is repeated mechanically or erased during polish.
+  final_readability:
+    scale: 1-5
+    high: The assembled paper reads as one coherent manuscript.
+    low: Sections feel independently generated and poorly connected.
+required_fields:
+  - status
+  - overall_score
+  - accepted_by_reviewers
+  - blocking_issues
+  - targeted_revisions
+  - unsupported_claims
+  - exact_value_mismatches
+  - direction_conflicts
+  - section_role_issues
+blocking_failures:
+  - unsupported Abstract promise
+  - unsupported Introduction study-entry claim
+  - unsupported Discussion implication
+  - exact value mismatch across sections
+  - direction or comparator conflict
+  - new result-level fact outside Results

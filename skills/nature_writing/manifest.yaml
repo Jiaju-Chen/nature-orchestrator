@@ -1,0 +1,44 @@
+schema_version: nature_orchestrator.nature_writing_skill.v1
+name: nature-writing
+status: current
+default_target_style: nature_research_article
+tasks:
+  section_writing: tasks/section_writing.md
+  full_paper_writing: tasks/full_paper_writing.md
+methods:
+  evidence_to_story: methods/evidence_to_story.md
+  write_review_and_refine: methods/write_review_and_refine.md
+  supervisor_evaluation: methods/supervisor_evaluation.md
+runner_profiles:
+  results: nature_writing_current_results
+  discussion: nature_writing_current_discussion
+  abstract_intro: nature_writing_current_abstract_intro
+  full_paper: nature_writing_current_full_paper
+prompts:
+  paper_story_planner: prompts/paper_story_planner.md
+  paper_story_aligner: prompts/paper_story_aligner.md
+  results_planner: prompts/results_planner.md
+  results_writer: prompts/results_writer.md
+  results_reviewer: prompts/results_reviewer.md
+  results_refiner: prompts/results_refiner.md
+  discussion_planner: prompts/discussion_planner.md
+  discussion_writer: prompts/discussion_writer.md
+  discussion_reviewer: prompts/discussion_reviewer.md
+  discussion_refiner: prompts/discussion_refiner.md
+  abstract_intro_planner: prompts/abstract_intro_planner.md
+  abstract_intro_writer: prompts/abstract_intro_writer.md
+  abstract_intro_reviewer: prompts/abstract_intro_reviewer.md
+  abstract_intro_refiner: prompts/abstract_intro_refiner.md
+  cross_section_evidence_ledger: prompts/cross_section_evidence_ledger.md
+  cross_section_reviewer: prompts/cross_section_reviewer.md
+  final_polisher: prompts/final_polisher.md
+  supervisor: prompts/supervisor.md
+rubrics:
+  section_reviewer: rubrics/section_reviewer_rubric.yaml
+  cross_section: rubrics/cross_section_rubric.yaml
+  supervisor: rubrics/supervisor_rubric.yaml
+forbidden_in_current_skill:
+  - training_case_slugs
+  - oracle_text
+  - hidden_reference_manuscripts
+  - archive_dependency_instructions

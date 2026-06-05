@@ -89,7 +89,7 @@ class NatureOrchestratorPipelineTests(unittest.TestCase):
         self.assertIn("inputs/research_question.md", allowed["allowed_files"])
         self.assertIn("inputs/figures.yaml", allowed["allowed_files"])
         self.assertIn(
-            "skills/nature_writing/versions/v0_2_generic_full_paper_pipeline/prompts/writer.md",
+            "skills/nature_writing/tasks/full_paper_writing.md",
             allowed["allowed_files"],
         )
         for value in allowed["allowed_files"]:
@@ -117,7 +117,7 @@ class NatureOrchestratorPipelineTests(unittest.TestCase):
         provenance = yaml.safe_load((out_dir / "provenance.yaml").read_text(encoding="utf-8"))
 
         self.assertEqual(provenance["schema_version"], "nature_orchestrator.provenance.v1")
-        self.assertEqual(provenance["skill_version"], "v0_2_generic_full_paper_pipeline")
+        self.assertEqual(provenance["skill_version"], "nature_writing_current")
         self.assertIn("workspace_hash", provenance)
         self.assertIn("writer", provenance["prompt_hashes"])
 

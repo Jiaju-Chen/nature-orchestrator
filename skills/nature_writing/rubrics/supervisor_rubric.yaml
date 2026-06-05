@@ -1,0 +1,41 @@
+schema_version: nature_orchestrator.supervisor_rubric.v1
+role: independent_final_evaluator
+score_scale: 1-5
+overall_pass_threshold: 4.2
+scores:
+  evidence_fidelity:
+    high: Final claims are recoverable from allowed evidence and respect method boundaries.
+    low: Final text invents, distorts or overgeneralizes evidence.
+  anchor_recall:
+    high: Must-mention values, controls, mechanisms and boundaries are present in final prose.
+    low: Important recoverable anchors are missing, wrong or only present in plans.
+  figure_role_understanding:
+    high: Figures serve clear setup, primary, mechanism, validation, boundary or integration roles.
+    low: Figures are flattened, misweighted or used for unsupported claims.
+  story_logic:
+    high: Evidence supports a clear central thesis and paragraph sequence.
+    low: The story is generic, fragmented, over-compressed or not paper-specific.
+  section_quality:
+    high: Each section performs its manuscript role well.
+    low: Sections blur roles or leave key reader questions unanswered.
+  writing_quality:
+    high: Dense, precise, connected prose with clear paragraph functions.
+    low: Fluent but generic, repetitive, loose, list-like or incoherent prose.
+  citation_context_grounding:
+    high: Background and prior-work claims have citation or context support.
+    low: Field-positioning claims are unsupported or decorative.
+  claim_calibration:
+    high: Limitations, uncertainty and transfer boundaries are placed near claims.
+    low: Claims are oversold or so conservative that contribution disappears.
+  reviewer_false_pass_detection:
+    high: Supervisor identifies issues reviewers missed.
+    low: Supervisor merely repeats reviewer status.
+required_outputs:
+  - overall_score
+  - per_section_scores
+  - major_strengths
+  - blocking_or_major_issues
+  - reviewer_false_passes
+  - evidence_grounding_diagnosis
+  - story_and_flow_diagnosis
+  - recommended_next_prompt_changes

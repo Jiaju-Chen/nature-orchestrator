@@ -1,0 +1,53 @@
+schema_version: nature_orchestrator.section_reviewer_rubric.v1
+decision_scale:
+  pass: Draft is evidence-grounded, section-appropriate and ready for downstream assembly.
+  revise: Draft has fixable failures with recoverable evidence or clear prose repairs.
+  fail: Draft is unsafe, malformed, oracle-dependent or not locally repairable.
+pass_threshold: 4.2
+scores:
+  evidence_fidelity:
+    scale: 1-5
+    high: Claims, values, directions, methods and figure roles are recoverable from allowed context.
+    low: Claims are unsupported, distorted, overgeneralized or oracle-dependent.
+  story_quality:
+    scale: 1-5
+    high: Section has a selective, paper-specific evidence-to-story route.
+    low: Section is generic, flat, over-compressed or a figure catalogue.
+  section_function:
+    scale: 1-5
+    high: Results reports evidence, Discussion synthesizes, Abstract/Introduction frame and compress.
+    low: Section performs the wrong manuscript role.
+  anchor_recall:
+    scale: 1-5
+    high: Recoverable must-mention anchors appear in final prose with correct boundaries.
+    low: Important anchors appear only in the plan, or are absent, wrong or demoted.
+  claim_boundary:
+    scale: 1-5
+    high: Weak, null, proxy, subgroup, model and method boundaries are visible.
+    low: Evidence strength is overstated or boundaries are hidden.
+  writing_quality:
+    scale: 1-5
+    high: Dense, connected, precise scientific prose with clear paragraph roles.
+    low: Generic, loose, repetitive, overly long or disconnected prose.
+required_reviewer_fields:
+  - status
+  - accepted_by_reviewers
+  - scores
+  - blocking_issues
+  - required_revisions
+  - must_mention_anchor_recall
+  - missing_recoverable_anchors
+  - direction_comparator_errors
+  - over_conservatism
+  - unrecoverable_detail_risk
+blocking_failures:
+  - unsupported exact values, mechanisms, directions or citations
+  - missing recoverable anchors that change the paper contribution
+  - wrong comparator, sign, baseline state or temporal order
+  - wrong intervention, rescue, prevention, failure or no-effect direction
+  - contribution-defining numeric anchors replaced by vague qualitative language
+  - Results claims that turn Methods, model or abstract-level interpretation into observed findings
+  - universal scope words that exceed the recoverable sample, event or figure evidence
+  - broad implication unsupported by Results
+  - section role failure
+  - reviewer passes by praising fluency while evidence failures remain

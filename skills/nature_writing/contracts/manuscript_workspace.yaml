@@ -2,6 +2,7 @@ schema_version: nature_orchestrator.manuscript_workspace.v1
 project:
   title: ""
   target_style: nature_research_article
+  venue_profile: skills/scientific_writing_supervisor/venue_profiles/nature_research_article.yaml
   field: ""
 inputs:
   research_question: inputs/research_question.md

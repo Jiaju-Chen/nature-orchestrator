@@ -1,0 +1,43 @@
+profile_name: nature_research_article
+default: true
+description: Default profile for Nature-style main-journal research articles.
+section_order:
+  - abstract
+  - introduction
+  - results
+  - discussion
+  - methods
+style_priorities:
+  - central story before section inventory
+  - broad scientific stakes without generic opening
+  - selective evidence disclosure
+  - figure hierarchy and panel purpose
+  - calibrated implication and limitation placement
+abstract_style:
+  disclose_problem_approach_core_finding_and_bounded_implication: true
+  avoid_methods_inventory: true
+intro_style:
+  expected_moves:
+    - broad context
+    - field progress
+    - article_specific_bottleneck
+    - study_entry
+    - contribution_and_evidence_preview
+results_style:
+  organize_by_reader_question: true
+  require_figure_role_map: true
+discussion_style:
+  synthesize_then_bound_then_implicate: true
+citation_style:
+  density: selective
+  use_for_specific_intellectual_debt: true
+rubric_weight_overrides:
+  story_quality: high
+  figure_hierarchy: high
+  evidence_selectivity: high
+  main_journal_fit: high
+  baselines_and_ablations: medium
+supervisor_notes:
+  - Penalize drafts that read like a specialist report with no broad consequence.
+  - Penalize evidence dumps even when all facts are technically grounded.
+  - Reward recoverable specificity only when it serves the central story.

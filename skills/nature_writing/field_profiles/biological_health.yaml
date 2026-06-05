@@ -1,0 +1,37 @@
+schema_version: nature_orchestrator.field_profile.v1
+profile_name: biological_health
+profile_strength: active_section_guidance
+applies_to:
+  - biological_sciences
+  - health_sciences
+purpose: >
+  Preserve biomedical claim boundaries when they change the meaning of a result.
+  This profile is not a source of field knowledge, disease knowledge, or story
+  templates; it only reminds the planner, writer, and reviewer to keep
+  recoverable controls, perturbations, proxies and model boundaries calibrated.
+preserve_when_claim_changing:
+  - biological_or_clinical_entity_identity
+  - perturbation_and_rescue_logic
+  - comparator_or_control_structure
+  - measurement_specificity
+  - model_or_design_boundary
+  - tissue_cell_cohort_or_context_scope
+calibrate_claim_types:
+  - association
+  - perturbation_effect
+  - mechanism
+  - diagnostic_or_predictive_signal
+  - translation_or_disease_relevance
+common_failure_modes:
+  - omics, imaging or model evidence overstated as mechanism
+  - model-system evidence overstated as direct clinical translation
+  - rescue, no-effect, specificity or negative-control evidence omitted
+  - local biological context compressed into a generic entity
+reviewer_required_audit:
+  field_profile_audit:
+    preserve_when_claim_changing: []
+    claim_type_calibration: []
+    omitted_controls_or_boundaries: []
+    proxy_overclaim_risk: low | medium | high
+    pass_allowed: true | false
+    field_profile_failure: false

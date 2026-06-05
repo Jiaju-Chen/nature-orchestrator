@@ -1,0 +1,12 @@
+schema_version: nature_orchestrator.abstract_intro_story_blueprint.v1
+required_fields:
+  - central_thesis
+  - abstract_message
+  - introduction_gap_ladder
+  - must_mention_anchors
+  - direction_comparator_table
+  - claim_boundary_table
+  - evidence_to_story_plan
+notes:
+  - Use this schema for planning only.
+  - Do not treat planned anchors as recalled unless they appear in final prose.

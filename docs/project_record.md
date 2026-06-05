@@ -1,152 +1,85 @@
 # NatureOrchestrator Project Record
 
-This document records the method-side design that pairs with NatureBench. It is
-intended to feed a future manuscript-style project report and public README.
+This document records the current method design behind the public
+`nature_writing` skill and the NatureBench evaluation adapter.
 
 ## One-Sentence Goal
 
-NatureOrchestrator coordinates specialized agents to draft, review, revise, and
-audit scientific manuscript sections from structured evidence packs.
+NatureOrchestrator coordinates agents that plan evidence, draft manuscript
+sections, review them against allowed context, refine targeted failures, polish
+the assembled paper, and evaluate final writing quality with an independent
+supervisor.
 
-## Motivation
+## Current Method
 
-Most writing tools treat manuscripts as text-completion problems. The intended
-system treats writing as evidence orchestration: figures, source data, tables,
-methods, code, citations, limitations, and reviewer feedback must be routed to
-the right specialized agent at the right stage.
+The project treats scientific writing as evidence orchestration rather than
+plain text completion. Figures, captions, methods, result notes, controls,
+claim boundaries, citations and reviewer feedback are routed to different
+roles at different stages.
 
-NatureBench is the first controlled test bed. Real usage should later support
-unpublished experiments, notebooks, draft figures, lab notes, and coauthor
-feedback.
+The current full-paper order is:
 
-## Method Sketch
+```text
+paper story contract
+-> Results write/review/refine
+-> Discussion write/review/refine
+-> Abstract+Introduction write/review/refine
+-> cross-section evidence ledger
+-> cross-section review/repair
+-> final polish
+-> supervisor evaluation
+```
 
-The V1 pipeline is benchmark-driven and consumes NatureBench task files through
-a file contract:
+Results come first because they define what the later sections may safely
+promise, interpret and compress.
 
-1. `load_task`: parse a section-masking task.
-2. `build_context`: assemble allowed context and enforce leakage policy.
-3. `plan_section`: decompose the task into evidence, writing, review, and
-   rewrite stages.
-4. `draft_section`: generate a section using an adapter.
-5. `review_rewrite`: critique and revise the draft.
-6. `oracle_audit`: after generation, compare against hidden ground truth.
+## Agent Roles
 
-## Adapter Strategy
+- Planner: converts allowed evidence into a story/evidence contract.
+- Writer: drafts a section from the contract and allowed context.
+- Reviewer: checks evidence fidelity, story quality, section function, anchor
+  recall, claim boundary and writing quality.
+- Refiner: addresses concrete reviewer or gate failures without rewriting
+  stable claims.
+- Cross-section reviewer: checks whether Abstract/Intro promises and
+  Discussion claims are supported by Results.
+- Supervisor: independently scores final writing quality and diagnoses whether
+  reviewers missed important issues.
 
-The first adapters are deliberately minimal:
+## Backend Strategy
 
-- `fake`: deterministic adapter for tests and pipeline debugging.
-- `prompt-pack`: writes a prompt package for Codex, Claude Code, or another
-  model-backed agent.
+The runners support the same orchestration with different executors:
 
-Future adapters can call specific model APIs, Claude Code skills, Codex
-subagents, or local toolchains. They should not change the NatureBench file
-contract.
+- Codex executor: better workspace-level behavior and file operations.
+- API executor: faster controlled agent calls with allowed-file and output-file
+  tools.
+- Hybrid mode: Codex can write/repair while API agents review or supervise.
+- Mock/prompt-pack modes: deterministic local smoke tests without model calls.
 
 ## Core Boundary
 
-Generation context must never include `benchmark/oracle/` files or the target
-section source path. Oracle files are opened only after a draft exists.
+Generation context must never include hidden oracle or target manuscript text.
+Benchmark oracle material is opened only after generation, and only for
+evaluation. Normal writing uses the user-provided workspace or the generated
+NatureBench evidence pack as its evidence source.
 
-Safe-web runs add another boundary: the agent does not receive raw web tools.
-It receives a blind task id, sanitized evidence, and a network policy. If it
-needs literature, it writes query requests; NatureOrchestrator filters the
-queries, search results, and fetched page text against NatureBench's hidden
-target fingerprint before writing `retrieval/literature_pack.yaml`.
+## Public Artifacts
 
-Network modes are:
+Safe public artifacts include:
 
-- `official_offline`: no live network; use curated cutoff-safe literature only.
-- `safe_web`: controlled search/fetch with guard logs.
-- `open_web`: unrestricted demo mode, not part of official scoring.
+- skill prompts, methods and rubrics
+- runner and evaluator code
+- tests
+- synthetic example workspaces
+- curated holdout reviewer/supervisor summaries
 
-## Relationship To AutoResearchClaw
+Do not publish real generated manuscripts, converted ground-truth manuscripts,
+publisher PDFs/HTML, raw NatureBench data, model logs, API keys or local path
+configuration.
 
-AutoResearchClaw motivates stage-based execution, gates, run artifacts,
-human-in-the-loop checkpoints, and multi-agent verification. NatureOrchestrator
-borrows those architectural ideas but does not copy the full 23-stage
-research-automation pipeline. The V1 scope is narrower: controlled manuscript
-section writing from NatureBench evidence packs.
+## Human Review Artifacts
 
-## Public Run Artifacts
-
-Each run should write:
-
-```text
-outputs/runs/<slug>/<task>/<run_id>/
-  run_manifest.yaml
-  context_pack/
-  retrieval/
-  prompt_pack/
-  drafts/
-  reviews/
-  final/
-  oracle_audit.yaml
-```
-
-The `context_pack` and `prompt_pack` are generation-stage artifacts. The
-`oracle_audit.yaml` is post-generation only.
-
-## Current Oracle Audit Metrics
-
-The V1 oracle audit is intentionally lightweight and deterministic. After a
-draft exists, it reads NatureBench oracle text and reports token recall,
-generated-token precision, missing ground-truth keywords, unsupported generated
-keywords, and LaTeX heading counts. These metrics are not a final semantic
-judge; they are a leakage-safe first pass for omissions, unsupported claims,
-and structure gaps.
-
-For Results tasks, the audit also writes `results_quality` metrics:
-
-- `structure_score`: coarse coverage of the ground-truth Results heading
-  structure.
-- `figure_grounding_score`: how many main figures in the evidence pack are
-  explicitly discussed.
-- `claim_role_score`: whether the draft includes empirical, design,
-  interpretive, and narrative claim roles.
-- `nature_narrative_score`: a heuristic combination of structure, evidence
-  grounding, and claim-role progression.
-- `leakage_score`: whether hidden target identifiers appear after generation.
-- `oracle_similarity`: token recall and precision kept as auxiliary signals,
-  not as the primary reward.
-
-The first Results-specific prompt surface is `results.figure_grounded`. It
-materializes figure PNGs and caption files into the run workspace under
-`evidence/figures/`, expands captions into `context_pack/context.md`, and
-instructs the agent to build a Nature-style chain of findings rather than a
-flat summary. Patch-like method snippets, role hints, and claim-level evidence
-patches are deferred to a later benchmark variant; V1 does not expose them as
-generation context.
-
-When a Results oracle audit runs, NatureOrchestrator also writes
-`reports/results_quality_report.md`. This is a human-readable layer over the
-machine-readable `oracle_audit.yaml`: expected and mentioned figures, missing
-figures, panel mention coverage, claim-role coverage, narrative heuristic,
-leakage hits, and oracle similarity. It is designed for quick inspection after
-a Codex/Claude run and should not be fed back into generation context.
-
-The golden smoke comparison for `s41586-026-10319-8` writes
-`outputs/smoke/s41586-026-10319-8/results_variant_comparison.md`. Current
-prompt-pack runs are marked `prompt_pack_only` because the adapter prepares the
-workspace and prompt but does not itself produce a substantive model-generated
-Results section.
-
-## README Draft Hooks
-
-The public README should answer:
-
-- What is NatureOrchestrator?
-- How does it consume a NatureBench task?
-- What are the `fake` and `prompt-pack` adapters?
-- How does it prevent oracle leakage?
-- How do I run one task?
-- How do I inspect the output directory?
-
-## Manuscript Draft Hooks
-
-A future method paper can describe NatureOrchestrator as the agentic method and
-NatureBench as the controlled evaluation substrate. The key methodological
-claim is not that the system writes perfect papers, but that it makes
-evidence-grounded writing, review, revision, and oracle audit explicit and
-measurable.
+Generated PDFs and converted ground-truth PDFs are useful for private human
+review. They should live in a local case artifact folder or presentation bundle,
+with a public markdown summary that explains what was compared and what the
+reviewers/supervisor concluded.

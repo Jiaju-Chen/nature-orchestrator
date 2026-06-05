@@ -1,0 +1,46 @@
+profile_name: ml_conference_paper
+default: false
+description: Profile for machine-learning conference papers such as NeurIPS, ICML, ICLR, CVPR, ACL, or EMNLP.
+section_order:
+  - abstract
+  - introduction
+  - related_work
+  - method
+  - experiments
+  - results
+  - limitations
+  - conclusion
+style_priorities:
+  - problem formulation and method clarity
+  - explicit comparison to closest prior work
+  - fair baselines and ablations
+  - metrics, datasets, splits, and reproducibility
+  - clear limitations and failure cases
+abstract_style:
+  disclose_task_method_primary_metric_and_main_comparison: true
+  avoid_unverified_sota_language: true
+intro_style:
+  expected_moves:
+    - task_or_problem
+    - limitation_of_existing_methods
+    - method_idea
+    - empirical_summary
+    - contributions
+results_style:
+  require_baseline_table: true
+  require_ablation_or_component_boundary: true
+discussion_style:
+  include_limitations_and_failure_modes: true
+citation_style:
+  density: moderate_to_high
+  require_closest_work_positioning: true
+rubric_weight_overrides:
+  method_clarity: high
+  baselines_and_ablations: high
+  metric_reporting: high
+  reproducibility: high
+  figure_hierarchy: medium
+supervisor_notes:
+  - Penalize SOTA or superiority claims without fair baseline evidence.
+  - Penalize missing dataset, metric, split, or ablation details that affect trust.
+  - Reward concise related-work positioning over citation dumping.

@@ -1,0 +1,37 @@
+profile_name: general_scientific_article
+default: false
+description: Neutral profile for scientific manuscript drafts when the target venue is not fixed.
+section_order:
+  - abstract
+  - introduction
+  - methods
+  - results
+  - discussion
+style_priorities:
+  - clear research question
+  - evidence-grounded claims
+  - reproducible methods summary
+  - readable section flow
+  - visible limitations
+abstract_style:
+  disclose_question_method_main_result_and_implication: true
+intro_style:
+  expected_moves:
+    - context
+    - gap
+    - study_aim
+    - contribution
+results_style:
+  organize_by_claim: true
+discussion_style:
+  state_interpretation_limitations_and_next_steps: true
+citation_style:
+  density: field_appropriate
+  require_support_for_literature_contrasts: true
+rubric_weight_overrides:
+  evidence_fidelity: high
+  writing_flow: high
+  claim_calibration: high
+supervisor_notes:
+  - Use this profile when no venue-specific structure is reliable.
+  - Do not enforce Nature-style breadth or ML-style ablation expectations unless the material calls for them.

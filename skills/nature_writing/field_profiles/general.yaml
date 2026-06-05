@@ -1,0 +1,39 @@
+schema_version: nature_orchestrator.field_profile.v1
+profile_name: general
+profile_strength: light_calibration_only
+applies_to:
+  - physical_sciences
+  - earth_and_environmental_sciences
+  - scientific_community_and_society
+  - general
+purpose: >
+  Provide a light claim-calibration checklist without changing the story route,
+  figure hierarchy or anchor selection unless a true proxy, transfer,
+  comparator or boundary overclaim is present. This profile is not domain
+  knowledge and should not introduce facts, examples, entities, mechanisms or
+  writing templates absent from the allowed evidence.
+preserve_when_claim_changing:
+  - entity identity
+  - comparator_or_control_structure
+  - measurement_specificity
+  - model_or_design_boundary
+  - scale_or_unit_of_analysis
+calibrate_claim_types:
+  - association
+  - mechanism
+  - capability
+  - prediction_or_projection
+  - transfer_or_generalization
+common_failure_modes:
+  - proxy evidence overstated as direct evidence
+  - model or benchmark evidence overstated as real-world transfer
+  - control, null or boundary evidence omitted
+  - claim-changing specificity compressed into a generic category
+reviewer_required_audit:
+  field_profile_audit:
+    preserve_when_claim_changing: []
+    claim_type_calibration: []
+    omitted_controls_or_boundaries: []
+    proxy_overclaim_risk: low | medium | high
+    pass_allowed: true | false
+    field_profile_failure: false

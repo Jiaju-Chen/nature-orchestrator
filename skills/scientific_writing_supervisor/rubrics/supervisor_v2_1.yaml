@@ -1,0 +1,117 @@
+schema_version: nature_orchestrator.supervisor_report.v2_1
+description: More diagnostic independent supervisor rubric for scientific manuscript section quality.
+inherits: supervisor_v2.yaml
+score_scale:
+  min: 1
+  max: 5
+  anchors:
+    1: fails the scientific writing task
+    2: serious revision required
+    3: usable but clearly improvable
+    4: strong for the available evidence
+    5: publication-level for the target venue profile
+venue_profile:
+  required: true
+  default: skills/scientific_writing_supervisor/venue_profiles/nature_research_article.yaml
+  allowed_profiles:
+    - nature_research_article
+    - ml_conference_paper
+    - general_scientific_article
+scores:
+  evidence_fidelity:
+    question: Are claims, numbers, methods, limitations, and figure references recoverable from allowed materials?
+    block_if_low: true
+  story_quality:
+    question: Is there a specific central thesis carried through the section?
+    block_if_low: true
+  evidence_to_writing_grounding:
+    question: Does the prose convert evidence into an argument rather than paraphrasing or inventing?
+    block_if_low: true
+  figure_role_understanding:
+    question: Does the draft explain why figures or panels matter to the story, not merely list them?
+    block_if_low: true
+  must_mention_anchor_recall:
+    question: Are recoverable numbers, controls, mechanisms, comparator directions, and boundaries included when central?
+    block_if_low: true
+  writing_flow:
+    question: Do sentences and paragraphs connect smoothly and logically?
+    block_if_low: false
+  sentence_tightness:
+    question: Does each sentence do a distinct rhetorical or evidentiary job?
+    block_if_low: false
+  paragraph_role_clarity:
+    question: Does each paragraph have one dominant role and advance the section argument?
+    block_if_low: false
+  venue_fit:
+    question: Does the draft meet the selected venue profile without overselling?
+    block_if_low: false
+  evidence_selectivity:
+    question: Are primary, secondary, and weak evidence placed with appropriate emphasis?
+    block_if_low: false
+  citation_safety:
+    question: Are literature and citation claims supported by allowed references or literature context?
+    block_if_low: true
+  claim_calibration:
+    question: Do causal, mechanistic, clinical, policy, or application claims match design strength?
+    block_if_low: true
+  reviewer_diagnosis:
+    question: Did the supervisor identify reviewer false passes, over-conservatism, or missed targeted revisions?
+    block_if_low: false
+  paragraph_transition_logic:
+    question: Does each paragraph connect to the previous one by cause, contrast, consequence, refinement, or example rather than by topic adjacency?
+    block_if_low: false
+  nature_sentence_cadence:
+    question: Are sentences tight enough for a Nature-style section, with dense evidence split where readability suffers?
+    block_if_low: false
+  citation_and_context_positioning:
+    question: Are background and field-positioning claims visibly supported by citations or allowed context where the section needs them?
+    block_if_low: false
+  anchor_prioritization:
+    question: Are central and secondary anchors prioritized correctly, without either anchor dumping or over-conservative omission?
+    block_if_low: true
+  section_role_integrity:
+    question: Does the section keep its role, avoiding Results previews in Introduction, figure recaps in Discussion, and Discussion claims in Results?
+    block_if_low: true
+diagnostic_focus:
+  abstract_intro:
+    - separate abstract disclosure from introduction framing
+    - check citation/context support for field-positioning claims
+    - check whether final introduction paragraph is contribution framing or a results preview
+  results:
+    - distinguish narrative chain from figure catalogue
+    - preserve directional comparators and payoff anchors
+    - keep interpretation local and defer broad implication
+  discussion:
+    - reverse-outline paragraph roles
+    - check whether limitations sit next to claims they qualify
+    - preserve paper-specific implication without introducing new results
+blocking_failure_types:
+  - central framing is wrong or missing
+  - key recoverable evidence defining the contribution is omitted
+  - comparator direction, causal direction, or mechanism boundary is wrong
+  - prose is generic enough to fit many papers
+  - paragraph sequence is incoherent
+  - results are written as a flat figure list
+  - introduction reads like a results inventory
+  - discussion introduces unsupported new results
+  - citation or literature claims lack support in allowed materials
+  - reviewer passed despite unresolved evidence or logic problems
+output_contract:
+  overall:
+    score: 1-5
+    verdict: pass | needs_revision | fail
+  required_fields:
+    - venue_profile
+    - scores
+    - blocking_failures
+    - missing_recoverable_anchors
+    - unsupported_or_unrecoverable_claims
+    - writing_diagnosis
+    - failure_attribution
+    - prompt_or_skill_lessons
+failure_attribution_fields:
+  - planner
+  - writer
+  - reviewer
+  - refiner
+  - context_limitation
