@@ -21,7 +21,8 @@ MAX_TOOL_SEARCH_MATCHES = 20
 MAX_TOOL_WINDOW_CHARS = 12000
 DEFAULT_TEX_COMMAND = "/opt/homebrew/bin/tectonic"
 MAX_COMPILE_OUTPUT_CHARS = 4000
-MAX_API_HTTP_RETRIES = 2
+MAX_API_HTTP_RETRIES = 5
+TRANSIENT_HTTP_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504, 524}
 
 
 @dataclass(frozen=True)
@@ -200,9 +201,9 @@ def _post_chat_completion(config: ApiConfig, payload: dict[str, Any], deadline: 
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             last_error = exc
-            if exc.code not in {429, 500, 502, 503, 504, 524} or attempt >= MAX_API_HTTP_RETRIES:
+            if exc.code not in TRANSIENT_HTTP_STATUS_CODES or attempt >= MAX_API_HTTP_RETRIES:
                 break
-            sleep_for = 1 + attempt
+            sleep_for = _api_retry_sleep_seconds(attempt, exc)
             if deadline is not None:
                 sleep_for = min(sleep_for, max(0, deadline - time.time()))
                 if sleep_for <= 0:
@@ -212,7 +213,7 @@ def _post_chat_completion(config: ApiConfig, payload: dict[str, Any], deadline: 
             last_error = exc
             if attempt >= MAX_API_HTTP_RETRIES:
                 break
-            sleep_for = 1 + attempt
+            sleep_for = _api_retry_sleep_seconds(attempt)
             if deadline is not None:
                 sleep_for = min(sleep_for, max(0, deadline - time.time()))
                 if sleep_for <= 0:
@@ -220,6 +221,18 @@ def _post_chat_completion(config: ApiConfig, payload: dict[str, Any], deadline: 
             time.sleep(sleep_for)
     assert last_error is not None
     raise last_error
+
+
+def _api_retry_sleep_seconds(attempt: int, exc: urllib.error.HTTPError | None = None) -> float:
+    retry_after = None
+    if exc is not None:
+        retry_after = exc.headers.get("Retry-After") if exc.headers is not None else None
+    if retry_after:
+        try:
+            return max(0.0, min(30.0, float(retry_after)))
+        except ValueError:
+            pass
+    return min(30.0, float(2**attempt))
 
 
 def _api_tool_schemas() -> list[dict[str, Any]]:

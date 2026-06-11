@@ -5,19 +5,35 @@ manuscript from a structured evidence workspace.
 
 ## Default Order
 
-1. Create a paper-level evidence and story contract.
-2. Write, review and refine Results.
-3. Update the paper story from Results feedback.
-4. Write, review and refine Discussion.
-5. Update the paper story from Discussion feedback.
-6. Write, review and refine Abstract plus Introduction.
-7. Generate a cross-section evidence ledger.
-8. Run cross-section review.
-9. Apply targeted full-paper polish.
-10. Run independent supervisor evaluation.
+1. Create an evidence-claim ledger from allowed figures, captions, methods,
+   source-data summaries and VLM notes.
+2. Create a paper-level story contract from the ledger and allowed context.
+3. Write, review and refine Results.
+4. Update the paper story from Results feedback.
+5. Write, review and refine Discussion.
+6. Update the paper story from Discussion feedback.
+7. Write, review and refine Abstract plus Introduction.
+8. Generate a cross-section evidence ledger from the actual manuscript text.
+9. Run cross-section review.
+10. Apply targeted full-paper polish.
+11. Run independent supervisor evaluation.
 
 This order keeps later sections honest: Discussion, Introduction and Abstract
 may interpret or compress only what Results can support.
+
+## Evidence-Claim Ledger
+
+The evidence-claim ledger is the pre-story evidence boundary. It records:
+
+- what each evidence item shows;
+- which comparator, direction and exact values are recoverable;
+- whether confidence comes from caption, source data, methods, other allowed
+  context, VLM-only evidence or uncertainty;
+- what must be written before the item can be compressed;
+- what must not be claimed.
+
+The paper story may prioritize or sequence these rows, but it cannot upgrade a
+low-confidence or VLM-only row into a definitive result.
 
 ## Paper-Level Story Contract
 

@@ -15,6 +15,7 @@ runner_profiles:
   abstract_intro: nature_writing_current_abstract_intro
   full_paper: nature_writing_current_full_paper
 prompts:
+  evidence_claim_ledger: prompts/evidence_claim_ledger.md
   paper_story_planner: prompts/paper_story_planner.md
   paper_story_aligner: prompts/paper_story_aligner.md
   results_planner: prompts/results_planner.md
@@ -31,6 +32,8 @@ prompts:
   abstract_intro_refiner: prompts/abstract_intro_refiner.md
   cross_section_evidence_ledger: prompts/cross_section_evidence_ledger.md
   cross_section_reviewer: prompts/cross_section_reviewer.md
+  cross_section_repair_planner: prompts/cross_section_repair_planner.md
+  targeted_section_patcher: prompts/targeted_section_patcher.md
   final_polisher: prompts/final_polisher.md
   supervisor: prompts/supervisor.md
 rubrics:

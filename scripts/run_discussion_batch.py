@@ -22,6 +22,7 @@ from nature_orchestrator.agents import AgentResult, ApiConfig, api_config_from_e
 from nature_orchestrator.io import write_text, write_yaml  # noqa: E402
 from nature_orchestrator.loader import load_task  # noqa: E402
 from nature_orchestrator.oracle import run_oracle_audit  # noqa: E402
+from nature_orchestrator.review_validation import final_text_quote_issues  # noqa: E402
 
 
 DEFAULT_TASKS_ROOT = ROOT.parent / "nature-bench" / "data" / "downloads"
@@ -348,6 +349,8 @@ def write_discussion_prompt_pack(run_dir: Path, task: DiscussionTask, skill: Dis
     ]
     if (run_dir / "paper" / "story" / "paper_story_contract.yaml").exists():
         allowed_files.append("paper/story/paper_story_contract.yaml")
+    if (run_dir / "paper" / "evidence" / "evidence_claim_ledger.yaml").exists():
+        allowed_files.append("paper/evidence/evidence_claim_ledger.yaml")
     write_yaml(run_dir / "prompt_pack" / "allowed_files.yaml", {"allowed_files": allowed_files})
     write_yaml(run_dir / "prompt_pack" / "forbidden_files.yaml", spec.raw.get("forbidden_context") or {})
     write_text(run_dir / "prompt_pack" / "prompt.md", build_writer_command_prompt(task, skill.version))
@@ -387,6 +390,14 @@ def copy_paper_story_contract(run_dir: Path, source: Path | None) -> None:
     shutil.copyfile(source, target)
 
 
+def copy_paper_evidence_ledger(run_dir: Path, source: Path | None) -> None:
+    if source is None or not source.exists() or not source.is_file():
+        return
+    target = run_dir / "paper" / "evidence" / "evidence_claim_ledger.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+
+
 def build_planner_command_prompt(task: DiscussionTask, skill_version: str) -> str:
     return f"""# Discussion Evidence-to-Story Planning Task
 
@@ -399,6 +410,7 @@ Use `context_pack/context.md` as the evidence source.
 
 Read:
 - `paper/story/paper_story_contract.yaml` if present. Treat it as a soft paper-level contract: preserve the central thesis, claim boundaries and section role when evidence supports them, but report corrections in `paper_contract_alignment` when Discussion evidence requires narrower interpretation.
+- `paper/evidence/evidence_claim_ledger.yaml` if present. Treat it as the evidence-confidence ledger; Discussion may synthesize supported implications but cannot upgrade low-confidence or VLM-only observations beyond Results support.
 - `skill/prompts/planner_prompt.md` if present
 - `skill/prompts/writer_prompt.md`
 - `skill/patterns/discussion_story_patterns.md`
@@ -725,6 +737,7 @@ def discussion_role_allowed(role: str, round_index: int = 0) -> list[str]:
         "context_pack/context.yaml",
         "context_pack/evidence_manifest.yaml",
         "paper/story/paper_story_contract.yaml",
+        "paper/evidence/evidence_claim_ledger.yaml",
         "skill/rubrics/discussion_rubric.yaml",
         "skill/patterns/discussion_story_patterns.md",
     ]
@@ -1028,7 +1041,11 @@ def gates_pass(run_dir: Path, round_index: int = 0) -> tuple[bool, list[str]]:
     return not failed, failed
 
 
-def reviewer_acceptance_gate(review: dict[str, Any], require_payoff_audit: bool = False) -> dict[str, Any]:
+def reviewer_acceptance_gate(
+    review: dict[str, Any],
+    require_payoff_audit: bool = False,
+    final_text: str = "",
+) -> dict[str, Any]:
     issues: list[str] = []
     status = review.get("status")
     if status not in {"pass", "revise", "fail"}:
@@ -1051,6 +1068,7 @@ def reviewer_acceptance_gate(review: dict[str, Any], require_payoff_audit: bool 
             issues.append("safe_underclaiming_risk must be low, medium, or high")
         if status == "pass" and payoff_audit_has_missing_or_underclaimed_anchor(review):
             issues.append("pass review cannot omit high-impact payoff anchors or carry medium/high safe_underclaiming_risk")
+    issues.extend(final_text_quote_issues(review, final_text, label="final Discussion"))
     return {
         "schema_version": "nature_orchestrator.discussion_reviewer_acceptance_gate.v1",
         "status": "passed" if not issues else "failed",
@@ -1066,12 +1084,18 @@ def is_schema_only_reviewer_gate_failure(report: dict[str, Any]) -> bool:
         "status must be pass, revise, or fail",
         "accepted_by_reviewers must be boolean",
         "missing reviewer audit field:",
+        "$.",
     )
-    return all(any(str(issue).startswith(prefix) for prefix in schema_issues) for issue in issues)
+    return all(
+        any(str(issue).startswith(prefix) for prefix in schema_issues)
+        and ("final_text_quote" in str(issue) or not str(issue).startswith("$."))
+        for issue in issues
+    )
 
 
 def reviewer_gate_pass(run_dir: Path, review: dict[str, Any], round_index: int, require_payoff_audit: bool = False) -> tuple[bool, list[str]]:
-    report = reviewer_acceptance_gate(review, require_payoff_audit=require_payoff_audit)
+    final_text = read_text_if_exists(run_dir / "final" / "discussion.tex")
+    report = reviewer_acceptance_gate(review, require_payoff_audit=require_payoff_audit, final_text=final_text)
     write_gate_report(run_dir, "reviewer_acceptance_gate", report, round_index)
     return report["status"] == "passed", ([] if report["status"] == "passed" else ["reviewer_acceptance_gate"])
 
@@ -1101,8 +1125,10 @@ def run_task(
     api_config: ApiConfig | None = None,
     max_refiner_rounds: int = 0,
     paper_story_contract: Path | None = None,
+    paper_evidence_ledger: Path | None = None,
 ) -> dict[str, Any]:
     copy_paper_story_contract(run_dir, paper_story_contract)
+    copy_paper_evidence_ledger(run_dir, paper_evidence_ledger)
     write_discussion_prompt_pack(run_dir, task, skill, image_mode=image_mode)
     record: dict[str, Any] = {
         "slug": task.slug,
@@ -1421,6 +1447,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--codex-timeout", type=int, default=DEFAULT_CODEX_TIMEOUT)
     parser.add_argument("--codex-binary", default="codex")
     parser.add_argument("--paper-story-contract", type=Path, default=None)
+    parser.add_argument("--paper-evidence-ledger", type=Path, default=None)
     parser.add_argument("--progress-plain", action="store_true")
     args = parser.parse_args(argv)
 
@@ -1449,6 +1476,7 @@ def main(argv: list[str] | None = None) -> int:
             api_config=api_cfg,
             max_refiner_rounds=args.max_refiner_rounds,
             paper_story_contract=args.paper_story_contract,
+            paper_evidence_ledger=args.paper_evidence_ledger,
         )
         records.append({**record, "run_dir": str(run_dir)})
         progress.event("task", "done", task=task, task_status=record.get("status"))

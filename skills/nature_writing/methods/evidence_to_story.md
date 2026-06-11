@@ -2,6 +2,10 @@
 
 Use this method before writing any section.
 
+Start with the evidence-claim ledger when it exists. The ledger answers what
+the evidence can safely support; the story plan answers how to order and weight
+that support for readers.
+
 ## Core Questions
 
 Ask:
@@ -25,6 +29,10 @@ Ask:
 - Which evidence is weak, proxy-based, null, subgroup-specific or model-bound?
 - Which details should be compressed or omitted because they do not serve the
   section role?
+- Which evidence rows are VLM-only or unclear, and therefore cannot carry
+  definitive direction, causality, rescue, prevention or no-effect wording?
+- Which supporting or validation evidence can be compressed only after its role
+  in the proof chain is visible?
 
 ## Required Plan Fields
 
@@ -50,6 +58,10 @@ For full-paper writing, also track section roles and cross-section dependencies.
 Use primary evidence for the thesis, support evidence for credibility, boundary
 evidence for calibration, and weak or missing context to prevent overclaiming.
 Do not make all evidence equally prominent.
+
+Do not let the story plan become a lossy substitute for evidence. If a panel,
+control, negative result or validation item matters to whether a reader trusts a
+claim, keep its role visible even when the prose later compresses it.
 
 ## Recoverability
 

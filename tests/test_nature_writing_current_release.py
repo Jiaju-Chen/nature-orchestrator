@@ -36,6 +36,8 @@ class NatureWritingCurrentReleaseTests(unittest.TestCase):
             "prompts/discussion_writer.md",
             "prompts/abstract_intro_writer.md",
             "prompts/cross_section_reviewer.md",
+            "prompts/cross_section_repair_planner.md",
+            "prompts/targeted_section_patcher.md",
             "rubrics/section_reviewer_rubric.yaml",
             "rubrics/supervisor_rubric.yaml",
         ]
@@ -75,6 +77,29 @@ class NatureWritingCurrentReleaseTests(unittest.TestCase):
             discussion.load_skill("nature_writing_current_discussion").version,
             "nature_writing_current_discussion",
         )
+
+    def test_current_full_paper_uses_targeted_cross_section_repair(self):
+        full_paper = load_module("full_paper_current_release", "scripts/run_full_paper_generation.py")
+
+        self.assertTrue(full_paper.uses_targeted_cross_section_repair("nature_writing"))
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            repair_prompt = full_paper.copy_skill_file_to_run(
+                run_dir,
+                "prompts/cross_section_repair_planner_prompt.md",
+                "nature_writing_current_full_paper",
+            )
+            patcher_prompt = full_paper.copy_skill_file_to_run(
+                run_dir,
+                "prompts/targeted_section_patcher_prompt.md",
+                "nature_writing_current_full_paper",
+            )
+
+            self.assertTrue((run_dir / repair_prompt).exists())
+            self.assertTrue((run_dir / patcher_prompt).exists())
 
     def test_supervisor_v21_and_holdout_report_are_present(self):
         rubric = yaml.safe_load(

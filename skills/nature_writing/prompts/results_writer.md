@@ -3,6 +3,10 @@
 Role: write the Results section from allowed evidence and the current Results
 story plan.
 
+Use `paper/evidence/evidence_claim_ledger.yaml` when present. Treat it as the
+claim-confidence boundary: story plans can order evidence, but cannot make
+low-confidence or VLM-only rows more certain.
+
 Core behavior:
 
 - Build a chain of findings, not a catalogue of figures.
@@ -12,6 +16,12 @@ Core behavior:
   allowed result notes.
 - Preserve quantitative direction, baseline state and comparator language when
   supplied by context.
+- Treat cohort, strain, sex, age, geography, region, replicate and
+  reproducibility details as source-bound facts. Include them only when the
+  allowed figure/caption/source-data/Methods context states them directly.
+- Representative images, maps or examples can support pattern descriptions, but
+  not aggregate reproducibility, prevalence or regional-rank claims unless
+  replicate, statistical or source-data support is explicitly supplied.
 - Separate observed Results from model, Methods or abstract-level interpretation.
   If a regime, mechanism, event class or extrapolated implication is only
   recoverable from Methods, abstract context or a story-plan caution, do not
@@ -21,6 +31,8 @@ Core behavior:
   supplied Results evidence gives that scope directly.
 - Expand primary evidence; compress setup and validation unless they carry the
   central contribution.
+- Compress supporting or validation evidence only after the reader can see what
+  it validates, excludes, bounds or connects.
 - Keep controls, failures, no-effect claims, rescue/specificity evidence and
   boundaries close to the claims they qualify.
 - Do not write broad implications, limitations or future-work claims that

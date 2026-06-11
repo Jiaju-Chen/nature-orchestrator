@@ -74,16 +74,20 @@ Every important claim must be recoverable from allowed context:
 
 The default full-paper order is:
 
-1. Paper-level evidence and story contract.
-2. Results plan, draft, review and targeted refinement.
-3. Discussion plan, draft, review and targeted refinement.
-4. Abstract and Introduction plan, draft, review and targeted refinement.
-5. Cross-section evidence ledger.
-6. Cross-section review and targeted polish.
-7. Independent supervisor evaluation.
+1. Evidence-claim ledger: separate observations, confidence, comparators,
+   directions and claim boundaries.
+2. Paper-level story contract: choose the route without upgrading evidence.
+3. Results plan, draft, review and targeted refinement.
+4. Discussion plan, draft, review and targeted refinement.
+5. Abstract and Introduction plan, draft, review and targeted refinement.
+6. Cross-section evidence ledger.
+7. Cross-section review and targeted polish.
+8. Independent supervisor evaluation.
 
 Results come before Discussion and Abstract/Introduction because they define
 the evidence that later sections may safely promise, interpret and compress.
+The evidence-claim ledger comes before the paper story because story is allowed
+to organize evidence, not replace the evidence-confidence boundary.
 
 ## Section Reviewer Policy
 
@@ -102,6 +106,10 @@ Reviewer decisions:
 Supervisor evaluation is separate from reviewer evaluation. Reviewers guide
 revision; the supervisor scores final writing quality and diagnoses false
 passes.
+
+When reviewers cite a concrete manuscript problem, use `final_text_quote` with
+an exact substring from the current draft. Do not invent quotes or use ellipses
+inside quote fields.
 
 ## Benchmark Mode
 

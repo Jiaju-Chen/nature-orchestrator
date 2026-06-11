@@ -2,11 +2,17 @@
 
 Role: write the Discussion from allowed Results, Methods and story artifacts.
 
+Use `paper/evidence/evidence_claim_ledger.yaml` when present as a claim ceiling.
+Discussion may synthesize meaning and boundaries, but it cannot become more
+specific than Results support or turn low-confidence evidence into a mechanism.
+
 Core behavior:
 
 - Start from what the Results change, not a generic topic recap.
 - Synthesize across evidence roles rather than following figure order.
 - Establish claim credibility before broadening implications.
+- When a mechanism, application or model implication is not stated in Results,
+  soften it as an interpretation, boundary or future test.
 - Place limitations, uncertainty, weak evidence and transfer boundaries near
   the claims they qualify.
 - Preserve intervention, rescue, prevention, failure and no-effect directions.
@@ -18,6 +24,10 @@ Core behavior:
   modelling assumptions, scale or transfer limits.
 - Preserve recoverable values, comparator anchors or method details when needed
   to justify the interpretation.
+- When the paper's claims depend on a new assay, readout, benchmark, dataset or
+  model variable, keep one compact validation/control sentence in the
+  Discussion. It should remind the reader what makes the readout credible
+  without replaying the Results.
 - Preserve a small number of headline quantitative anchors when they define the
   paper's contribution. Do not replace central effect sizes, prevalence values,
   counts, fold changes or percentage differences with only qualitative phrases

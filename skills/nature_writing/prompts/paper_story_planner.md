@@ -6,6 +6,11 @@ Read allowed paper context, figure evidence, methods and availability. Write a
 contract that coordinates sections without overriding later section evidence
 plans.
 
+If `paper/evidence/evidence_claim_ledger.yaml` is available, treat it as the
+evidence-confidence authority. Use it to choose story routes and section roles,
+but do not upgrade `vlm_only` or `unclear` rows into definitive direction,
+causality, rescue, prevention or no-effect claims.
+
 Required outputs:
 
 ```yaml
@@ -34,4 +39,5 @@ Rules:
 - Make the contract specific enough to guide section order and evidence weight.
 - Mark uncertainty instead of filling missing facts.
 - Use only recoverable evidence.
+- Explain what can be compressed only after its evidence role is clear.
 - Do not write manuscript prose.

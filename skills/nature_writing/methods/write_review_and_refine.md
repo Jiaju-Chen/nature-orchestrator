@@ -27,11 +27,20 @@ direction or comparator errors, overclaims, unsupported implications, generic
 story framing and section-role failures. It must not pass a draft only because
 the prose is fluent.
 
+When the reviewer names a concrete manuscript problem, include an exact
+`final_text_quote` from the current draft and explain why that phrase fails.
+If there is no exact phrase because the problem is an omission, state the
+missing anchor and the evidence source instead of inventing a quote.
+
 ## Refiner
 
 The refiner revises only blocking issues, required revisions and deterministic
 gate failures. It should preserve supported anchors and avoid broad rewrites
 unless the reviewer says the story route itself is wrong.
+
+The refiner must use reviewer issue fields, exact quotes, gate reports and the
+evidence-claim ledger when present. It should repair the named failure rather
+than reinterpreting the whole paper from memory.
 
 ## Stop Rule
 

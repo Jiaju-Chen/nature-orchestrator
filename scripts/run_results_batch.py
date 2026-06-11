@@ -22,6 +22,7 @@ from nature_orchestrator.agents import AgentResult, ApiConfig, api_config_from_e
 from nature_orchestrator.io import write_text, write_yaml  # noqa: E402
 from nature_orchestrator.loader import load_task  # noqa: E402
 from nature_orchestrator.oracle import run_oracle_audit  # noqa: E402
+from nature_orchestrator.review_validation import final_text_quote_issues  # noqa: E402
 
 
 DEFAULT_TASKS_ROOT = ROOT.parent / "nature-bench" / "data" / "downloads"
@@ -47,6 +48,17 @@ COUNT_WITH_DESCRIPTOR_RE = re.compile(
 PAREN_N_COUNT_RE = re.compile(
     r"\b(papers?|researchers?|participants?|patients?|datasets?|samples?|cells?|mice|rats)\b"
     r"\s*\([^)]*\bn\s*=\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\b[^)]*\)",
+    re.IGNORECASE,
+)
+METRIC_VALUE_RE = re.compile(
+    r"\b(?:F1(?:-score)?|AUC|accuracy|precision|recall|kappa|κ|R\^?2)\b"
+    r"[^.\n;:,]{0,40}?"
+    r"(?:≥|<=|>=|≤|=|>|<|at least|of)?\s*"
+    r"((?:0?\.\d+)|(?:1\.0+))\b",
+    re.IGNORECASE,
+)
+METRIC_CONTEXT_CUE_RE = re.compile(
+    r"\b(?:F1(?:-score)?|AUC|accuracy|precision|recall|kappa|expert-?labelled|expert-?labeled|validation|model)\b|κ",
     re.IGNORECASE,
 )
 FIGURE_REF_RE = re.compile(r"\b(?:Figs?|Figures?)\.?\s*~?\s*\d+[a-z]?", re.IGNORECASE)
@@ -161,7 +173,43 @@ def extract_numeric_anchors(text: str) -> list[str]:
     for match in PAREN_N_COUNT_RE.finditer(text or ""):
         unit = normalize_anchor(match.group(1))
         anchors.add(normalize_anchor(f"{match.group(2)} {unit}"))
+    for match in METRIC_VALUE_RE.finditer(text or ""):
+        anchors.add(normalize_anchor(match.group(1)))
     return sorted(anchors)
+
+
+def compressed_count_anchor_supported(anchor: str, context_lower: str) -> bool:
+    match = re.fullmatch(r"(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s+([a-zµμ-]+)", normalize_anchor(anchor))
+    if not match:
+        return False
+    number, unit = match.groups()
+    normalized_context = context_lower.replace("μ", "µ")
+    pattern = rf"\b{re.escape(number)}\b(?:\s+[a-zµμ-]+){{0,4}}\s+{re.escape(unit.replace('μ', 'µ'))}\b"
+    if re.search(pattern, normalized_context, re.IGNORECASE) is not None:
+        return True
+    n_pattern = rf"\bn\s*=\s*{re.escape(number)}\b"
+    unit_pattern = rf"\b{re.escape(unit.replace('μ', 'µ'))}\b"
+    for match in re.finditer(n_pattern, normalized_context, re.IGNORECASE):
+        window = normalized_context[match.start() : match.start() + 140]
+        if re.search(unit_pattern, window, re.IGNORECASE):
+            return True
+    return False
+
+
+def metric_value_anchor_supported(anchor: str, context_text: str) -> bool:
+    normalized_anchor = normalize_anchor(anchor)
+    match = re.match(r"(?P<value>(?:0?\.\d+)|(?:1\.0+))\b", normalized_anchor)
+    if not match:
+        return False
+    if not METRIC_CONTEXT_CUE_RE.search(normalized_anchor):
+        return False
+    value = match.group("value")
+    normalized_context = normalize_anchor(context_text)
+    for value_match in re.finditer(re.escape(value), normalized_context):
+        window = normalized_context[max(0, value_match.start() - 90) : value_match.end() + 90]
+        if METRIC_CONTEXT_CUE_RE.search(window):
+            return True
+    return False
 
 
 def extract_figure_refs(text: str) -> list[str]:
@@ -447,6 +495,8 @@ def write_results_prompt_pack(run_dir: Path, task: ResultsTask, skill: ResultsSk
     ]
     if (run_dir / "paper" / "story" / "paper_story_contract.yaml").exists():
         allowed_files.append("paper/story/paper_story_contract.yaml")
+    if (run_dir / "paper" / "evidence" / "evidence_claim_ledger.yaml").exists():
+        allowed_files.append("paper/evidence/evidence_claim_ledger.yaml")
     write_yaml(run_dir / "prompt_pack" / "allowed_files.yaml", {"allowed_files": allowed_files})
     write_yaml(run_dir / "prompt_pack" / "forbidden_files.yaml", spec.raw.get("forbidden_context") or {})
     write_text(run_dir / "prompt_pack" / "prompt.md", build_writer_command_prompt(task, skill.version))
@@ -487,6 +537,14 @@ def copy_paper_story_contract(run_dir: Path, source: Path | None) -> None:
     shutil.copyfile(source, target)
 
 
+def copy_paper_evidence_ledger(run_dir: Path, source: Path | None) -> None:
+    if source is None or not source.exists() or not source.is_file():
+        return
+    target = run_dir / "paper" / "evidence" / "evidence_claim_ledger.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+
+
 def build_planner_command_prompt(task: ResultsTask, skill_version: str) -> str:
     compact_policy = ""
     if skill_version.startswith("yuan_nature_writing_results"):
@@ -514,6 +572,7 @@ Field profile policy: {field_profile_policy_for_task(task, skill_version)}
 
 Read:
 - `paper/story/paper_story_contract.yaml` if present. Treat it as a soft paper-level contract; preserve its central thesis and claim boundaries when evidence supports them, but report corrections in `paper_contract_alignment` when section-level evidence requires narrowing.
+- `paper/evidence/evidence_claim_ledger.yaml` if present. Treat it as the evidence-confidence ledger; a Results story may order evidence, but must not upgrade VLM-only or unclear rows into definite direction, causality, rescue, prevention or no-effect claims.
 - `skill/prompts/planner_prompt.md` if present
 - `skill/prompts/writer_prompt.md`
 - `skill/patterns/results_story_patterns.md`
@@ -859,6 +918,7 @@ def results_role_allowed(role: str, round_index: int = 0) -> list[str]:
         "skill/field_profiles/active_field_profile.yaml",
     ]
     base.append("paper/story/paper_story_contract.yaml")
+    base.append("paper/evidence/evidence_claim_ledger.yaml")
     if role == "planner":
         return base + ["skill/prompts/planner_prompt.md", "skill/prompts/writer_prompt.md"]
     if role == "story_refiner":
@@ -965,7 +1025,14 @@ def evidence_anchor_gate(generated: str, manifest: dict[str, Any], context_text:
     context_lower = (context_text or "").lower().replace("μ", "µ")
     generated_numeric = extract_numeric_anchors(generated)
     generated_figures = extract_figure_refs(generated)
-    unsupported_numeric = [item for item in generated_numeric if item not in allowed_numeric and item not in context_lower]
+    unsupported_numeric = [
+        item
+        for item in generated_numeric
+        if item not in allowed_numeric
+        and item not in context_lower
+        and not compressed_count_anchor_supported(item, context_lower)
+        and not metric_value_anchor_supported(item, context_text)
+    ]
     unsupported_figures = [
         item
         for item in generated_figures
@@ -1177,6 +1244,7 @@ def reviewer_acceptance_gate(
     review: dict[str, Any],
     require_payoff_audit: bool = False,
     require_field_profile_audit: bool = False,
+    final_text: str = "",
 ) -> dict[str, Any]:
     issues: list[str] = []
     status = review.get("status")
@@ -1219,6 +1287,7 @@ def reviewer_acceptance_gate(
                 issues.append("field_profile_audit.proxy_overclaim_risk must be low, medium, or high")
             if status == "pass" and field_profile_audit_has_blocking_issue(review):
                 issues.append("pass review cannot carry field_profile_audit failure or medium/high proxy_overclaim_risk")
+    issues.extend(final_text_quote_issues(review, final_text, label="final Results"))
     return {
         "schema_version": "nature_orchestrator.results_reviewer_acceptance_gate.v1",
         "status": "passed" if not issues else "failed",
@@ -1237,8 +1306,13 @@ def is_schema_only_reviewer_gate_failure(report: dict[str, Any]) -> bool:
         "missing field_profile_audit",
         "field_profile_audit missing required field:",
         "field_profile_audit.proxy_overclaim_risk",
+        "$.",
     )
-    return all(any(str(issue).startswith(prefix) for prefix in schema_issues) for issue in issues)
+    return all(
+        any(str(issue).startswith(prefix) for prefix in schema_issues)
+        and ("final_text_quote" in str(issue) or not str(issue).startswith("$."))
+        for issue in issues
+    )
 
 
 def reviewer_gate_pass(
@@ -1248,10 +1322,12 @@ def reviewer_gate_pass(
     require_payoff_audit: bool = False,
     require_field_profile_audit: bool = False,
 ) -> tuple[bool, list[str]]:
+    final_text = read_text_if_exists(run_dir / "final" / "results.tex")
     report = reviewer_acceptance_gate(
         review,
         require_payoff_audit=require_payoff_audit,
         require_field_profile_audit=require_field_profile_audit,
+        final_text=final_text,
     )
     write_gate_report(run_dir, "reviewer_acceptance_gate", report, round_index)
     return report["status"] == "passed", ([] if report["status"] == "passed" else ["reviewer_acceptance_gate"])
@@ -1282,8 +1358,10 @@ def run_task(
     api_config: ApiConfig | None = None,
     max_refiner_rounds: int = 0,
     paper_story_contract: Path | None = None,
+    paper_evidence_ledger: Path | None = None,
 ) -> dict[str, Any]:
     copy_paper_story_contract(run_dir, paper_story_contract)
+    copy_paper_evidence_ledger(run_dir, paper_evidence_ledger)
     write_results_prompt_pack(run_dir, task, skill, image_mode=image_mode)
     record: dict[str, Any] = {
         "slug": task.slug,
@@ -1604,6 +1682,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--codex-timeout", type=int, default=DEFAULT_CODEX_TIMEOUT)
     parser.add_argument("--codex-binary", default="codex")
     parser.add_argument("--paper-story-contract", type=Path, default=None)
+    parser.add_argument("--paper-evidence-ledger", type=Path, default=None)
     parser.add_argument("--progress-plain", action="store_true")
     args = parser.parse_args(argv)
 
@@ -1632,6 +1711,7 @@ def main(argv: list[str] | None = None) -> int:
             api_config=api_cfg,
             max_refiner_rounds=args.max_refiner_rounds,
             paper_story_contract=args.paper_story_contract,
+            paper_evidence_ledger=args.paper_evidence_ledger,
         )
         records.append({**record, "run_dir": str(run_dir)})
         progress.event("task", "done", task=task, task_status=record.get("status"))

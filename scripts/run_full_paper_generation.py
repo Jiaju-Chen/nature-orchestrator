@@ -19,6 +19,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from nature_orchestrator.agents import api_config_from_env, run_agent  # noqa: E402
+from nature_orchestrator.evidence_ledger import evidence_claim_ledger_gate  # noqa: E402
 
 DEFAULT_TASKS_ROOT = ROOT.parent / "nature-bench" / "data" / "downloads"
 DEFAULT_OUT = ROOT / "outputs" / "full_paper_generation"
@@ -104,7 +105,8 @@ NATURE_POLISHING_ROOT = ROOT.parent / "nature-skills" / "skills" / "nature-polis
 PAPER_STORY_CONTRACT_PROFILES = {"v2_7", "v2_7_1", "v2_7_2", "nature_writing"}
 PAPER_STORY_ALIGNMENT_PROFILES = {"v2_7", "v2_7_1", "nature_writing"}
 CROSS_SECTION_LEDGER_PROFILES = {"v2_7_1", "v2_7_2", "nature_writing"}
-TARGETED_REPAIR_PROFILES = {"v2_7_2"}
+EVIDENCE_CLAIM_LEDGER_PROFILES = {"nature_writing"}
+TARGETED_REPAIR_PROFILES = {"v2_7_2", "nature_writing"}
 REPAIR_SECTION_ORDER = ["results", "discussion", "abstract_intro"]
 REPAIR_EDIT_TYPES = {
     "add_results_support",
@@ -114,6 +116,13 @@ REPAIR_EDIT_TYPES = {
     "remove_unsupported_claim",
     "trim_repetition",
 }
+
+
+def effective_cross_repair_rounds(args: argparse.Namespace) -> int:
+    value = getattr(args, "max_cross_repair_rounds", None)
+    if value is None:
+        return max(0, int(getattr(args, "max_refiner_rounds", 0)))
+    return max(0, int(value))
 
 
 def parse_section_agent_backends(value: str) -> dict[str, str]:
@@ -439,6 +448,182 @@ def section_score_gate(review: dict[str, Any], threshold: float = PASS_THRESHOLD
     }
 
 
+NUMERIC_ANCHOR_RE = re.compile(
+    r"(?<![\w.])"
+    r"(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)"
+    r"(?:\s*\\?%|\s*(?:times|x)\b|\s*[- ]?years?\b)?",
+    re.IGNORECASE,
+)
+METRIC_VALUE_RE = re.compile(r"(?<![\w.])(?:0?\.\d+|1\.0+)(?![\w.])")
+METRIC_CONTEXT_CUE_RE = re.compile(
+    r"\b(?:f1|f1-score|kappa|fleiss|agreement|auc|score)\b|\\kappa|κ",
+    re.IGNORECASE,
+)
+
+
+def _normalize_anchor_text(value: str) -> str:
+    normalized = value.replace("\\%", "%").replace("–", "-").replace("—", "-")
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()
+
+
+def _iter_strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        strings: list[str] = []
+        for child in value.values():
+            strings.extend(_iter_strings(child))
+        return strings
+    if isinstance(value, list):
+        strings = []
+        for child in value:
+            strings.extend(_iter_strings(child))
+        return strings
+    return []
+
+
+def extract_numeric_anchor_claims(review: dict[str, Any]) -> list[str]:
+    """Extract reviewer-confirmed numeric anchors that polish must not erase."""
+
+    sources: list[Any] = []
+    for key in [
+        "must_mention_anchor_recall",
+        "payoff_anchor_audit",
+        "story_contract_audit",
+    ]:
+        if key in review:
+            sources.append(review[key])
+    anchors: list[str] = []
+    seen: set[str] = set()
+    for text in _iter_strings(sources):
+        for match in NUMERIC_ANCHOR_RE.finditer(text):
+            anchor = _normalize_anchor_text(match.group(0))
+            if not anchor:
+                continue
+            # Single-digit integers from labels are usually not useful final anchors.
+            if re.fullmatch(r"\d", anchor):
+                continue
+            key = anchor.lower().replace(",", "")
+            if key not in seen:
+                anchors.append(anchor)
+                seen.add(key)
+    return anchors
+
+
+def _numeric_anchor_present(anchor: str, final_text: str) -> bool:
+    anchor_norm = _normalize_anchor_text(anchor).lower()
+    text_norm = _normalize_anchor_text(final_text).lower()
+    if anchor_norm in text_norm:
+        return True
+    # Accept comma-free rendering of large counts.
+    if "," in anchor_norm and anchor_norm.replace(",", "") in text_norm.replace(",", ""):
+        return True
+    multiplier_match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(?:x|times)", anchor_norm)
+    if multiplier_match:
+        number = re.escape(multiplier_match.group(1))
+        multiplier_pattern = rf"(?<![\w.]){number}\s*(?:x|times|fold)\b|(?<![\w.]){number}-fold\b"
+        if re.search(multiplier_pattern, text_norm, re.IGNORECASE):
+            return True
+    metric_match = re.fullmatch(r"0?\.\d+|1\.0+", anchor_norm)
+    if metric_match:
+        try:
+            threshold = float(anchor_norm)
+        except ValueError:
+            threshold = -1.0
+        if 0.8 <= threshold <= 1.0:
+            for value_match in METRIC_VALUE_RE.finditer(text_norm):
+                try:
+                    value = float(value_match.group(0))
+                except ValueError:
+                    continue
+                if value + 1e-12 < threshold:
+                    continue
+                window = text_norm[max(0, value_match.start() - 90) : value_match.end() + 90]
+                if METRIC_CONTEXT_CUE_RE.search(window):
+                    return True
+    return False
+
+
+def final_section_anchor_gate(section: str, review: dict[str, Any], final_text: str) -> dict[str, Any]:
+    numeric_anchors = extract_numeric_anchor_claims(review)
+    missing = [anchor for anchor in numeric_anchors if not _numeric_anchor_present(anchor, final_text)]
+    return {
+        "schema_version": "nature_orchestrator.final_section_anchor_gate.v1",
+        "section": section,
+        "status": "failed" if missing else "passed",
+        "numeric_anchors": numeric_anchors,
+        "missing_numeric_anchors": missing,
+        "blocking_issues": [
+            (
+                f"{section} final text dropped reviewer-confirmed numeric anchors: "
+                + ", ".join(missing)
+            )
+        ]
+        if missing
+        else [],
+    }
+
+
+def write_final_section_anchor_gates(run_dir: Path) -> dict[str, Any]:
+    section_files = {
+        "results": "manuscript/results.tex",
+        "discussion": "manuscript/discussion.tex",
+    }
+    section_gates: dict[str, Any] = {}
+    blocking_issues: list[str] = []
+    for section, rel_text_path in section_files.items():
+        review = read_yaml(run_dir / "sections" / section / "reviews" / "section_review.yaml")
+        final_text = read_text(run_dir / rel_text_path)
+        gate = final_section_anchor_gate(section=section, review=review if isinstance(review, dict) else {}, final_text=final_text)
+        section_gates[section] = gate
+        write_yaml(run_dir / "audits" / f"final_section_anchor_gate_{section}.yaml", gate)
+        blocking_issues.extend(gate["blocking_issues"])
+    summary = {
+        "schema_version": "nature_orchestrator.final_section_anchor_gate_summary.v1",
+        "status": "failed" if blocking_issues else "passed",
+        "section_gates": section_gates,
+        "blocking_issues": blocking_issues,
+    }
+    write_yaml(run_dir / "audits" / "final_section_anchor_gate.yaml", summary)
+    return summary
+
+
+def apply_final_section_anchor_gate(run_dir: Path, review: dict[str, Any]) -> dict[str, Any]:
+    gate = write_final_section_anchor_gates(run_dir)
+    if gate["status"] == "passed":
+        return review
+    updated = dict(review)
+    updated["status"] = "revise"
+    updated["accepted_by_reviewers"] = False
+    current_score = score_to_float(updated.get("overall_score"))
+    updated["overall_score"] = min(current_score if current_score is not None else PASS_THRESHOLD - 0.1, PASS_THRESHOLD - 0.1)
+    blocking = updated.get("blocking_issues") or []
+    if not isinstance(blocking, list):
+        blocking = [str(blocking)]
+    for issue in gate["blocking_issues"]:
+        blocking.append(
+            {
+                "issue": issue,
+                "severity": "blocking",
+                "required_fix": (
+                    "Restore the reviewer-confirmed decisive numeric anchor in the "
+                    "same final section, unless the cross-section evidence ledger "
+                    "explicitly marks it unsupported."
+                ),
+            }
+        )
+    updated["blocking_issues"] = blocking
+    targeted = updated.get("targeted_revisions") or []
+    if not isinstance(targeted, list):
+        targeted = [str(targeted)]
+    targeted.extend(gate["blocking_issues"])
+    updated["targeted_revisions"] = targeted
+    write_yaml(run_dir / "reviews" / "cross_section_review.yaml", updated)
+    write_yaml(run_dir / "audits" / "cross_section_score_gate.yaml", section_score_gate(updated))
+    return updated
+
+
 def latest_review_file(section_run: Path, section: str) -> Path | None:
     names = {
         "results": "results_review",
@@ -558,6 +743,200 @@ def prepare_paper_story_context(run_dir: Path, tasks_root: Path, slug: str) -> l
         if _safe_copy_to_run(source, target):
             allowed.append(str(target.relative_to(run_dir)))
     return allowed
+
+
+def _downstream_sections_from_role_hints(figure: dict[str, Any]) -> list[str]:
+    sections = {"results"}
+    for hint in figure.get("role_hints") or []:
+        if not isinstance(hint, dict):
+            continue
+        section = str(hint.get("section") or "").strip().lower()
+        if section in {"abstract", "introduction", "abstract_intro", "discussion", "results"}:
+            sections.add(section)
+        if section == "abstract_intro":
+            sections.update({"abstract", "introduction"})
+    return sorted(sections)
+
+
+def build_mock_evidence_claim_ledger(run_dir: Path, field: str = "unknown_field") -> dict[str, Any]:
+    evidence_pack = read_yaml(run_dir / "paper" / "context" / "evidence_pack.yaml")
+    figures = []
+    if isinstance(evidence_pack, dict):
+        figures = evidence_pack.get("figure_evidence") or evidence_pack.get("figures") or []
+    if not isinstance(figures, list):
+        figures = []
+
+    evidence_items: list[dict[str, Any]] = []
+    for index, figure in enumerate(figures, start=1):
+        if not isinstance(figure, dict):
+            continue
+        figure_id = str(figure.get("id") or figure.get("figure") or f"figure-{index}")
+        caption = str(figure.get("caption_text") or figure.get("caption") or "").strip()
+        if not caption and figure.get("caption_path"):
+            caption = str(figure.get("caption_path"))
+        observation = caption or f"{figure_id} is available as figure-grounded evidence."
+        method_snippets = figure.get("method_snippets") or []
+        has_method = bool(method_snippets)
+        evidence_items.append(
+            {
+                "anchor": figure_id,
+                "observation": observation[:500],
+                "comparator": "use only comparators explicitly stated in caption, method or source data",
+                "direction": "unclear unless the allowed context explicitly states a signed direction",
+                "confidence_source": "caption_supported" if caption else "allowed_context_supported",
+                "evidence_role": "primary_claim" if index == 1 else "support",
+                "must_write_detail": (
+                    "state what this evidence contributes to the Results chain; preserve comparator, "
+                    "direction and numeric values only when they are recoverable from allowed files"
+                ),
+                "can_compress": "setup, assay logistics or validation details after their evidence role is made clear",
+                "cannot_claim": (
+                    "do not upgrade visual impressions or unstated comparisons into definite direction, "
+                    "causality, rescue, prevention or no-effect claims"
+                ),
+                "downstream_section_use": _downstream_sections_from_role_hints(figure),
+            }
+        )
+        if has_method:
+            evidence_items.append(
+                {
+                    "anchor": f"{figure_id}:method",
+                    "observation": str(method_snippets[0].get("text") if isinstance(method_snippets[0], dict) else method_snippets[0])[:500],
+                    "comparator": "method context only",
+                    "direction": "not a result direction",
+                    "confidence_source": "method_supported",
+                    "evidence_role": "validation",
+                    "must_write_detail": "use method detail to explain why the readout is interpretable when needed",
+                    "can_compress": "procedural detail not needed for a reader to trust the claim",
+                    "cannot_claim": "do not treat method description as an independent result",
+                    "downstream_section_use": ["results", "discussion"],
+                }
+            )
+
+    vlm_text = read_text(run_dir / "paper" / "context" / "vlm_figure_evidence.md").strip()
+    if vlm_text:
+        evidence_items.append(
+            {
+                "anchor": "vlm_figure_evidence",
+                "observation": vlm_text[:500],
+                "comparator": "visual-model observation; comparator may be incomplete",
+                "direction": "unclear",
+                "confidence_source": "vlm_only",
+                "evidence_role": "boundary",
+                "must_write_detail": "use as a prompt to inspect allowed captions/source context, not as signed proof",
+                "can_compress": "visual texture that is not supported by caption, methods or source data",
+                "cannot_claim": "definite signed effects, causal mechanisms, rescue, prevention or no-effect",
+                "downstream_section_use": ["results"],
+            }
+        )
+
+    if not evidence_items:
+        evidence_items.append(
+            {
+                "anchor": "allowed_paper_context",
+                "observation": f"Allowed paper context exists for a {field} manuscript, but no structured figure rows were found.",
+                "comparator": "unclear",
+                "direction": "unclear",
+                "confidence_source": "unclear",
+                "evidence_role": "boundary",
+                "must_write_detail": "mark missing evidence explicitly and avoid invented claim direction",
+                "can_compress": "all unsupported detail",
+                "cannot_claim": "specific figure, comparator, number or mechanism not present in allowed files",
+                "downstream_section_use": ["results", "discussion", "abstract", "introduction"],
+            }
+        )
+
+    return {
+        "schema_version": "nature_orchestrator.evidence_claim_ledger.v1",
+        "field": field,
+        "evidence_items": evidence_items,
+        "story_use_rules": [
+            "Story plans may order and weight evidence but must not replace this ledger.",
+            "A paper or section story can narrow claims, but cannot upgrade vlm_only or unclear evidence into definite direction.",
+            "Compression is allowed only after the item's evidence role, comparator boundary and unsupported claims are clear.",
+        ],
+    }
+
+
+def build_evidence_claim_ledger_prompt() -> str:
+    return """# Evidence-to-Claim Ledger
+
+Read only the allowed files. Before paper story planning, build a structured
+ledger that separates evidence observations from manuscript claims.
+
+Inputs may include:
+- paper/context/full_paper_task.yaml
+- paper/context/full_paper_task_safe_web.yaml
+- paper/context/evidence_pack.yaml
+- paper/context/vlm_figure_evidence.md
+- paper/context/methods.tex
+- paper/context/availability.tex
+- skill/prompts/evidence_claim_ledger_prompt.md
+
+Write:
+- paper/evidence/evidence_claim_ledger.yaml
+
+Use schema_version `nature_orchestrator.evidence_claim_ledger.v1`.
+Each `evidence_items` row must include:
+- anchor
+- observation
+- comparator
+- direction
+- confidence_source: caption_supported | source_data_supported |
+  method_supported | allowed_context_supported | vlm_only | unclear
+- evidence_role: primary_claim | support | boundary | control |
+  negative_result | validation | limitation
+- must_write_detail
+- can_compress
+- cannot_claim
+- downstream_section_use
+
+Rules:
+- Do not write manuscript prose.
+- Use VLM-only observations as uncertainty/boundary cues unless caption,
+  method, source data or other allowed context supports a signed direction.
+- A later story plan may order or weight rows, but may not upgrade confidence.
+- Before finishing, validate the YAML output.
+"""
+
+
+def write_evidence_claim_ledger(run_dir: Path, args: argparse.Namespace, slug: str, field: str) -> dict[str, Any]:
+    allowed_files = prepare_paper_story_context(run_dir, args.tasks_root, slug)
+    skill_version = full_paper_skill_version(getattr(args, "full_paper_polisher_profile", "v2_4"))
+    allowed_files.append(copy_skill_file_to_run(run_dir, "prompts/evidence_claim_ledger_prompt.md", skill_version))
+    if getattr(args, "agent_backend", "mock") == "mock":
+        ledger = build_mock_evidence_claim_ledger(run_dir, field=field)
+        write_yaml(run_dir / "paper" / "evidence" / "evidence_claim_ledger.yaml", ledger)
+        write_yaml(run_dir / "audits" / "evidence_claim_ledger_gate.yaml", evidence_claim_ledger_gate(ledger))
+        return ledger
+
+    backend = "api" if getattr(args, "agent_backend", "api") in {"api", "codex+api"} else "codex"
+    api_config = None
+    if backend == "api":
+        api_config = api_config_from_env(args.env, args.model, args.api_timeout, args.api_max_tokens)
+    result = run_agent(
+        role="evidence_claim_ledger",
+        run_dir=run_dir,
+        prompt=build_evidence_claim_ledger_prompt(),
+        allowed_files=allowed_files,
+        output_contract={"files": {"paper/evidence/evidence_claim_ledger.yaml": "yaml"}},
+        backend=backend,
+        timeout=args.api_timeout if backend == "api" else args.codex_timeout,
+        codex_binary=args.codex_binary,
+        api_config=api_config,
+    )
+    write_yaml(run_dir / "logs" / "evidence_claim_ledger.agent_result.yaml", result.__dict__)
+    ledger = read_yaml(run_dir / "paper" / "evidence" / "evidence_claim_ledger.yaml")
+    gate = evidence_claim_ledger_gate(ledger if isinstance(ledger, dict) else {})
+    if not isinstance(ledger, dict) or result.status != "done" or gate["status"] != "passed":
+        ledger = build_mock_evidence_claim_ledger(run_dir, field=field)
+        ledger.setdefault("story_use_rules", []).append(
+            f"Agent ledger failed or was invalid for {slug}; fallback ledger is conservative."
+        )
+        write_yaml(run_dir / "paper" / "evidence" / "evidence_claim_ledger.yaml", ledger)
+        gate = evidence_claim_ledger_gate(ledger)
+    write_yaml(run_dir / "audits" / "evidence_claim_ledger_gate.yaml", gate)
+    return ledger
 
 
 def build_mock_paper_story_contract(slug: str, field: str, run_dir: Path) -> dict[str, Any]:
@@ -687,8 +1066,11 @@ def copy_skill_file_to_run(run_dir: Path, relative: str, skill_version: str = SK
         source_map = {
             "prompts/paper_story_prompt.md": root / "prompts" / "paper_story_planner.md",
             "prompts/paper_story_aligner_prompt.md": root / "prompts" / "paper_story_aligner.md",
+            "prompts/evidence_claim_ledger_prompt.md": root / "prompts" / "evidence_claim_ledger.md",
             "prompts/cross_section_evidence_ledger_prompt.md": root / "prompts" / "cross_section_evidence_ledger.md",
             "prompts/cross_section_reviewer_prompt.md": root / "prompts" / "cross_section_reviewer.md",
+            "prompts/cross_section_repair_planner_prompt.md": root / "prompts" / "cross_section_repair_planner.md",
+            "prompts/targeted_section_patcher_prompt.md": root / "prompts" / "targeted_section_patcher.md",
             "prompts/full_paper_polisher_prompt.md": root / "prompts" / "final_polisher.md",
             "rubrics/cross_section_rubric.yaml": root / "rubrics" / "cross_section_rubric.yaml",
         }
@@ -719,6 +1101,10 @@ def uses_cross_section_evidence_ledger(profile: str) -> bool:
     return profile in CROSS_SECTION_LEDGER_PROFILES
 
 
+def uses_evidence_claim_ledger(profile: str) -> bool:
+    return profile in EVIDENCE_CLAIM_LEDGER_PROFILES
+
+
 def uses_targeted_cross_section_repair(profile: str) -> bool:
     return profile in TARGETED_REPAIR_PROFILES
 
@@ -732,6 +1118,7 @@ paper route, section roles, evidence allocation and claim boundaries, but later
 section planners may refine or correct it with more detailed evidence audits.
 
 Inputs may include:
+- paper/evidence/evidence_claim_ledger.yaml
 - paper/context/full_paper_task.yaml
 - paper/context/full_paper_task_safe_web.yaml
 - paper/context/evidence_pack.yaml
@@ -742,6 +1129,11 @@ Inputs may include:
 
 Write:
 - paper/story/paper_story_contract.yaml
+
+Treat `paper/evidence/evidence_claim_ledger.yaml` as the evidence-confidence
+authority when present. The paper story may order and weight evidence, but it
+must not upgrade VLM-only or unclear rows into definitive direction, causality,
+rescue, prevention or no-effect claims.
 
 The YAML must include:
 - schema_version: nature_orchestrator.paper_story_contract.v2
@@ -770,6 +1162,8 @@ Before finishing, validate the YAML output.
 def write_paper_story_contract(run_dir: Path, args: argparse.Namespace, slug: str, field: str) -> dict[str, Any]:
     allowed_files = prepare_paper_story_context(run_dir, args.tasks_root, slug)
     skill_version = full_paper_skill_version(getattr(args, "full_paper_polisher_profile", "v2_4"))
+    if (run_dir / "paper" / "evidence" / "evidence_claim_ledger.yaml").exists():
+        allowed_files.append("paper/evidence/evidence_claim_ledger.yaml")
     allowed_files.append(copy_skill_file_to_run(run_dir, "prompts/paper_story_prompt.md", skill_version))
     if getattr(args, "agent_backend", "mock") == "mock":
         contract = normalize_paper_story_contract(build_mock_paper_story_contract(slug, field, run_dir))
@@ -930,6 +1324,24 @@ def attach_paper_story_contract(section_run_root: Path, full_run_dir: Path) -> N
     shutil.copyfile(source, target)
 
 
+def attach_paper_context_artifacts(section_run_root: Path, full_run_dir: Path) -> None:
+    artifacts = [
+        (
+            full_run_dir / "paper" / "story" / "paper_story_contract.yaml",
+            section_run_root / "paper" / "story" / "paper_story_contract.yaml",
+        ),
+        (
+            full_run_dir / "paper" / "evidence" / "evidence_claim_ledger.yaml",
+            section_run_root / "paper" / "evidence" / "evidence_claim_ledger.yaml",
+        ),
+    ]
+    for source, target in artifacts:
+        if not source.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+
 def build_cross_section_reviewer_prompt() -> str:
     return """# Full-Paper Cross-Section Review
 
@@ -939,6 +1351,7 @@ not as four independent sections.
 Inputs:
 - paper/story/paper_story_contract.yaml when present
 - paper/story/paper_story_plan.yaml
+- paper/evidence/evidence_claim_ledger.yaml when present
 - audits/cross_section_evidence_ledger.yaml when present
 - manuscript/abstract.tex
 - manuscript/introduction.tex
@@ -964,11 +1377,22 @@ The YAML must include:
 - repetition_control
 - claim_boundary_consistency
 
-Use the pass threshold 4.2. Block if the Abstract/Introduction promise claims
-not supported by Results, Discussion introduces new Results, or the central
-claim/qualifiers conflict across sections. If `paper_story_contract.yaml` is
-present, use it as the authoritative soft controller and report any section
-that ignored or correctly narrowed the contract.
+Use the pass threshold 4.2. Block if the Abstract/Introduction promise
+paper-specific study claims not supported by Results, Discussion introduces new
+Results, or the central claim/qualifiers conflict across sections. Do not
+require general Introduction background or motivation statements to be visible
+in Results unless they contain exact study values, paper-specific empirical
+findings, causal claims, or unsupported mechanistic claims. If a broad
+background sentence is too strong, mark it as citation/background-safety advice,
+not a blocking cross-section support failure. Do not make every unsupported
+method parameter a blocking failure: a missing dose, injection volume, buffer,
+acquisition setting, strain detail or implementation parameter is
+minor_nonblocking unless it changes the comparator, effect direction, sample
+scope, claim strength or interpretation. Ask for removal/softening, but do not
+fail the paper for a small non-central method detail. If
+`paper_story_contract.yaml` is present, use it as the authoritative soft
+controller and report any section that ignored or correctly narrowed the
+contract.
 
 If `audits/cross_section_evidence_ledger.yaml` is present, use it as the
 claim-support map. Do not re-infer unsupported claims from scratch when the
@@ -990,6 +1414,7 @@ written. Inspect the actual Abstract, Introduction, Results and Discussion.
 Inputs:
 - paper/story/paper_story_contract.yaml
 - paper/story/paper_story_plan.yaml
+- paper/evidence/evidence_claim_ledger.yaml when present
 - manuscript/abstract.tex
 - manuscript/introduction.tex
 - manuscript/results.tex
@@ -1009,6 +1434,8 @@ The YAML must include:
   `claim`, `exact_values`, `results_support`, and `status`
 - discussion_claims: list of claims made by the current Discussion, each with
   `claim`, `exact_values`, `results_support`, and `status`
+- background_context_claims: optional list of broad Introduction background or
+  motivation claims that do not need Results support unless over-specific
 - results_support_lines: list of Results lines or compact excerpts that support
   the promises; include `anchor` and `line`
 - missing_support: claims in Abstract/Introduction/Discussion with no visible
@@ -1021,6 +1448,25 @@ The YAML must include:
 - recoverable_results_repairs: missing Results support lines that can be added
   because the value/claim is present in the paper story contract or section
   evidence plans; include `anchor`, `source`, and `suggested_results_line`
+
+Consistency rules:
+- Classify each outside-Results claim exactly once. If current Results visibly
+  support the claim, mark that claim `supported` or `partially_supported` and
+  add the supporting excerpt to `results_support_lines`; do not also include it
+  in `missing_support`.
+- Do not put broad Introduction background in `missing_support` merely because
+  Results do not discuss it. Background belongs in `background_context_claims`
+  when it frames the field or motivation without paper-specific exact values,
+  new mechanisms, or causal conclusions.
+- Put an Introduction statement in `missing_support` only when it promises a
+  study-specific finding, exact value, comparator, mechanism, scope boundary or
+  contribution that the Results should visibly support.
+- Use `recoverable_results_repairs` only when current Results do not yet contain
+  the support line but an allowed paper contract, section plan or section review
+  directly supports adding one. If the suggested repair has already been added
+  to current Results, move it into `results_support_lines` instead.
+- Do not mark a claim `not_visible_in_results` merely because it originated from
+  Discussion or a plan. Inspect the current Results text first.
 
 This is not a quality review. It is a claim-support accounting artifact for the
 cross-section reviewer and full-paper polisher.
@@ -1117,6 +1563,7 @@ def write_cross_section_evidence_ledger(run_dir: Path, args: argparse.Namespace)
     allowed_files = [
         "paper/story/paper_story_contract.yaml",
         "paper/story/paper_story_plan.yaml",
+        "paper/evidence/evidence_claim_ledger.yaml",
         "audits/cross_section_evidence_ledger.yaml",
         "manuscript/abstract.tex",
         "manuscript/introduction.tex",
@@ -1334,6 +1781,75 @@ def build_mock_cross_section_repair_plan(run_dir: Path, round_index: int) -> dic
     }
 
 
+def sanitize_repair_plan_for_recoverable_results(plan: dict[str, Any], ledger: dict[str, Any]) -> dict[str, Any]:
+    """Avoid deleting summary-section anchors that should be fixed by adding Results support first."""
+
+    recoverable = ledger.get("recoverable_results_repairs") if isinstance(ledger, dict) else []
+    if not recoverable:
+        return plan
+    sanitized = dict(plan)
+    kept: list[Any] = []
+    deferred = list(sanitized.get("unresolved_or_deferred") or [])
+    for action in sanitized.get("repair_actions") or []:
+        if not isinstance(action, dict):
+            kept.append(action)
+            continue
+        source = str(action.get("source") or "").lower()
+        edit_type = str(action.get("edit_type") or "").lower()
+        target_files = " ".join(str(item).lower() for item in _as_list(action.get("target_files")))
+        affected_sections = {
+            normalize_repair_section(str(section))
+            for section in _as_list(action.get("affected_sections"))
+        }
+        touches_front_matter = (
+            "abstract_intro" in affected_sections
+            or "abstract" in affected_sections
+            or "introduction" in affected_sections
+            or "manuscript/abstract.tex" in target_files
+            or "manuscript/introduction.tex" in target_files
+        )
+        if "exact_value_mismatches" in source and edit_type in {
+            "soften_external_claim",
+            "remove_unsupported_claim",
+            "harmonize_method_label",
+            "harmonize_direction",
+        }:
+            deferred.append(
+                {
+                    "issue_id": action.get("issue_id"),
+                    "reason": (
+                        "deferred because recoverable Results support exists; "
+                        "rerun the cross-section ledger after adding Results support "
+                        "before softening Abstract, Introduction or Discussion anchors"
+                    ),
+                    "original_action": action,
+                }
+            )
+            continue
+        if "missing_support" in source and touches_front_matter and edit_type in {
+            "soften_external_claim",
+            "remove_unsupported_claim",
+            "harmonize_method_label",
+            "harmonize_direction",
+        }:
+            deferred.append(
+                {
+                    "issue_id": action.get("issue_id"),
+                    "reason": (
+                        "deferred because recoverable Results support exists and "
+                        "this action would edit Abstract/Introduction before the "
+                        "new Results support can be re-ledgered"
+                    ),
+                    "original_action": action,
+                }
+            )
+            continue
+        kept.append(action)
+    sanitized["repair_actions"] = kept
+    sanitized["unresolved_or_deferred"] = deferred
+    return sanitized
+
+
 def _merge_repair_actions(primary: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
     merged = dict(primary)
     if merged.get("repair_actions"):
@@ -1352,11 +1868,16 @@ def _merge_repair_actions(primary: dict[str, Any], fallback: dict[str, Any]) -> 
             source = str(action.get("source") or "")
             edit_type = str(action.get("edit_type") or "")
             # Keep the anti-bloat behavior from API plans: do not append extra
-            # Results-support repairs when the planner already chose a narrow
-            # repair path. Still add ledger-proven unsupported outside-Results
-            # claims, because those are small softening/removal edits and can
-            # otherwise surface only after the final review round.
-            if "missing_support" not in source or edit_type not in {
+            # repairs when the planner already chose a narrow repair path. The
+            # exception is recoverable Results support: it must be added before
+            # outside-Results anchors are softened, otherwise the repair loop can
+            # erase contribution-defining numbers from the Abstract/Introduction.
+            # Still add ledger-proven unsupported outside-Results claims, because
+            # those are small softening/removal edits and can otherwise surface
+            # only after the final review round.
+            if "recoverable_results_repairs" in source and edit_type == "add_results_support":
+                pass
+            elif "missing_support" not in source or edit_type not in {
                 "soften_external_claim",
                 "remove_unsupported_claim",
             }:
@@ -1425,11 +1946,22 @@ Rules:
   over adding more Results support unless the reviewer explicitly asks for a
   recoverable Results line.
 - If the ledger has `recoverable_results_repairs`, create a Results action.
+- If a recoverable Results action can support an exact value, do not also create
+  a same-round Abstract/Introduction/Discussion softening action for that same
+  exact value. First add Results support, then let the next ledger/review decide
+  whether any outside-Results wording still needs narrowing.
+- When recoverable Results support exists, avoid same-round actions that edit
+  Abstract or Introduction for `missing_support` created only by the current
+  Results omission. Patch Results first; re-evaluate support in the next round.
+- You may still patch a Discussion-only unsupported claim in the same round when
+  it is not resolved by adding Results support.
 - If the ledger has outside-Results `missing_support` rows, create a small
   softening/removal action for those section files even when another review
   issue is more prominent.
 - If the ledger has exact-value or method-label mismatches, create a
   harmonization action that names both the outside-Results and Results wording.
+- Preserve contribution-defining exact anchors in Abstract and Introduction when
+  they are directly recoverable and can be made Results-supported.
 - If support is not recoverable, soften or remove the claim outside Results.
 """
 
@@ -1472,9 +2004,11 @@ def write_cross_section_repair_plan(run_dir: Path, args: argparse.Namespace, rou
         plan = fallback
     else:
         plan = _merge_repair_actions(plan, fallback)
+    ledger = read_yaml(run_dir / "audits" / "cross_section_evidence_ledger.yaml")
+    plan = sanitize_repair_plan_for_recoverable_results(plan, ledger if isinstance(ledger, dict) else {})
     gate = cross_section_repair_plan_gate(plan)
     if gate["status"] != "passed":
-        plan = fallback
+        plan = sanitize_repair_plan_for_recoverable_results(fallback, ledger if isinstance(ledger, dict) else {})
         gate = cross_section_repair_plan_gate(plan)
     write_yaml(run_dir / "repairs" / "cross_section_repair_plan.yaml", plan)
     write_yaml(run_dir / "audits" / "cross_section_repair_plan_gate.yaml", gate)
@@ -1501,6 +2035,17 @@ Rules:
 - Preserve all section-local evidence anchors that already passed section review.
 - Add Results support only when the repair plan cites recoverable evidence.
 - If support is unrecoverable, soften or remove the outside-Results claim.
+- For Abstract, Introduction and Discussion, inspect the current Results text
+  before softening exact values. If the same value, a clearer exact value, or an
+  equivalent expression is now visible in Results, preserve the outside-Results
+  anchor and only adjust wording for calibration.
+- If the repair plan contains both `add_results_support` and
+  `soften_external_claim` for the same anchor family, do not delete the
+  outside-Results anchor in the same round; let the next cross-section review
+  decide after Results support has been added.
+- Do not replace contribution-defining numbers with generic phrases such as
+  "small subset", "validated model", "more visible" or "more concentrated" when
+  supported exact values are available.
 - Keep LaTeX structure intact and write only the declared output files.
 """
 
@@ -1617,7 +2162,10 @@ Rules:
 - If a number/claim appears in one section but is unsupported by another section,
   prefer aligning wording conservatively rather than adding unseen evidence.
 - If the reviewer offers "add to Results or remove from Discussion/Intro/Abstract",
-  choose removal/softening unless the exact claim is already present in Results.
+  first check `audits/cross_section_evidence_ledger.yaml`. When the same item is
+  listed under `recoverable_results_repairs`, add exactly one bounded Results
+  support line. Choose removal/softening only when the ledger does not directly
+  support a recoverable repair.
 - Do not add new result-level facts to Results during full-paper polish; Results
   can only be compressed, clarified or made consistent with its existing content,
   except for ledger `recoverable_results_repairs` that are directly supported by
@@ -1630,8 +2178,29 @@ Rules:
   For each named detail, either find it verbatim or near-verbatim in Results, or
   delete/soften it from Abstract, Introduction and Discussion. Do not leave a
   named blocking example unresolved because the overall story still sounds good.
+- For each `missing_support` item in the cross-section ledger, write down the
+  exact sentence that creates the problem before editing. If the current Results
+  do not already contain a visible support line and the ledger does not list the
+  item under `recoverable_results_repairs`, remove or narrow that sentence
+  outside Results. Do not preserve it by adding a new Results fact.
+- If you choose to use a `recoverable_results_repairs` item, add one bounded
+  Results support sentence and also remove any stronger version from Abstract,
+  Introduction or Discussion. Do not leave the same claim marked as missing.
+- If a targeted revision asks for a compact Results scope/support line and the
+  ledger lists a matching `recoverable_results_repairs` entry, apply it. Do not
+  ignore recoverable support repairs in favor of style-only compression.
 - Exact numeric values in Abstract should only remain when the same values are in
   Results. Otherwise use directional phrasing.
+- Do not use repetition control to erase decisive section anchors that the
+  section reviewer already accepted. Read `sections/results/reviews/section_review.yaml`,
+  `sections/discussion/reviews/section_review.yaml` and
+  `audits/final_section_anchor_gate.yaml` when present. If the final anchor gate
+  says Results or Discussion dropped reviewer-confirmed numeric anchors, restore
+  them in the same section unless the cross-section evidence ledger explicitly
+  marks them unsupported.
+- For Discussion, compression means avoid a full Results recap, not replacing
+  central magnitudes with vague phrases. Preserve a small set of decisive
+  quantitative comparators when they define the paper's main contrast.
 - Preserve section roles: Results report evidence, Discussion synthesizes,
   Introduction frames the gap after Results are known, Abstract compresses the
   final story.
@@ -1693,6 +2262,7 @@ def write_cross_section_review(run_dir: Path, args: argparse.Namespace) -> dict[
     allowed_files = [
         "paper/story/paper_story_contract.yaml",
         "paper/story/paper_story_plan.yaml",
+        "paper/evidence/evidence_claim_ledger.yaml",
         "audits/cross_section_evidence_ledger.yaml",
         "manuscript/abstract.tex",
         "manuscript/introduction.tex",
@@ -1749,12 +2319,16 @@ def run_full_paper_polisher(run_dir: Path, args: argparse.Namespace, round_index
     allowed_files = [
         "paper/story/paper_story_contract.yaml",
         "paper/story/paper_story_plan.yaml",
+        "paper/evidence/evidence_claim_ledger.yaml",
         "audits/cross_section_evidence_ledger.yaml",
+        "audits/final_section_anchor_gate.yaml",
         "manuscript/abstract.tex",
         "manuscript/introduction.tex",
         "manuscript/results.tex",
         "manuscript/discussion.tex",
         "reviews/cross_section_review.yaml",
+        "sections/results/reviews/section_review.yaml",
+        "sections/discussion/reviews/section_review.yaml",
     ]
     if args.full_paper_polisher_profile == "yuan_nature_polishing":
         allowed_files.extend(copy_nature_polishing_to_run(run_dir))
@@ -1801,6 +2375,9 @@ def run_mock(run_dir: Path, slug: str, field: str, args: argparse.Namespace) -> 
     full_skill_version = full_paper_skill_version(full_profile)
     section_profile = getattr(args, "section_skill_profile", "v2_3")
     section_skills = SECTION_SKILL_PROFILES[section_profile]
+    evidence_claim_ledger = None
+    if uses_evidence_claim_ledger(full_profile):
+        evidence_claim_ledger = write_evidence_claim_ledger(run_dir, args, slug, field)
     if uses_paper_story_contract(full_profile):
         write_paper_story_contract(run_dir, args, slug, field)
     else:
@@ -1829,6 +2406,11 @@ def run_mock(run_dir: Path, slug: str, field: str, args: argparse.Namespace) -> 
             if cross_section_evidence_ledger is not None
             else None
         ),
+        "evidence_claim_ledger": (
+            "paper/evidence/evidence_claim_ledger.yaml"
+            if evidence_claim_ledger is not None
+            else None
+        ),
         "final_output": str(final_path),
     }
     write_yaml(run_dir / "provenance.yaml", provenance)
@@ -1853,6 +2435,7 @@ def run_mock(run_dir: Path, slug: str, field: str, args: argparse.Namespace) -> 
             "overall_score": cross_review["overall_score"],
             "status": cross_review["status"],
         },
+        "evidence_claim_ledger": evidence_claim_ledger,
         "cross_section_evidence_ledger": cross_section_evidence_ledger,
         "cross_section_repair_records": [],
         "final_output": str(final_path),
@@ -1906,6 +2489,19 @@ def copy_section_output(status_path: Path, section: str, run_dir: Path) -> dict[
 
 
 def run_real_sections(args: argparse.Namespace, run_dir: Path, slug: str, field: str) -> dict[str, Any]:
+    evidence_claim_ledger_path = None
+    if uses_evidence_claim_ledger(args.full_paper_polisher_profile):
+        ledger_path = run_dir / "paper" / "evidence" / "evidence_claim_ledger.yaml"
+        existing_ledger = read_yaml(ledger_path)
+        if (
+            isinstance(existing_ledger, dict)
+            and evidence_claim_ledger_gate(existing_ledger).get("status") == "passed"
+        ):
+            write_yaml(run_dir / "audits" / "evidence_claim_ledger_gate.yaml", evidence_claim_ledger_gate(existing_ledger))
+        else:
+            write_evidence_claim_ledger(run_dir, args, slug, field)
+        if ledger_path.exists():
+            evidence_claim_ledger_path = ledger_path
     if uses_paper_story_contract(args.full_paper_polisher_profile):
         paper_contract_path = run_dir / "paper" / "story" / "paper_story_contract.yaml"
         existing_contract = read_yaml(paper_contract_path)
@@ -1927,6 +2523,11 @@ def run_real_sections(args: argparse.Namespace, run_dir: Path, slug: str, field:
     paper_story_contract_arg = (
         ["--paper-story-contract", str(paper_contract_path)]
         if paper_contract_path is not None and paper_contract_path.exists()
+        else []
+    )
+    paper_evidence_ledger_arg = (
+        ["--paper-evidence-ledger", str(evidence_claim_ledger_path)]
+        if evidence_claim_ledger_path is not None and evidence_claim_ledger_path.exists()
         else []
     )
     section_root = run_dir / "section_runs"
@@ -1966,6 +2567,7 @@ def run_real_sections(args: argparse.Namespace, run_dir: Path, slug: str, field:
                 "--codex-binary",
                 args.codex_binary,
                 *paper_story_contract_arg,
+                *paper_evidence_ledger_arg,
             ],
         ),
         (
@@ -2000,6 +2602,7 @@ def run_real_sections(args: argparse.Namespace, run_dir: Path, slug: str, field:
                 "--codex-binary",
                 args.codex_binary,
                 *paper_story_contract_arg,
+                *paper_evidence_ledger_arg,
             ],
         ),
         (
@@ -2032,12 +2635,13 @@ def run_real_sections(args: argparse.Namespace, run_dir: Path, slug: str, field:
                 "--codex-binary",
                 args.codex_binary,
                 *paper_story_contract_arg,
+                *paper_evidence_ledger_arg,
                 "--quiet-progress",
             ],
         ),
     ]
     for section, command in commands:
-        attach_paper_story_contract(section_root / section, run_dir)
+        attach_paper_context_artifacts(section_root / section, run_dir)
         status_path = find_status(section_root / section, slug)
         status = read_yaml(status_path) if status_path is not None else {}
         if isinstance(status, dict) and status.get("status") == "done":
@@ -2058,11 +2662,13 @@ def run_real_sections(args: argparse.Namespace, run_dir: Path, slug: str, field:
     if uses_cross_section_evidence_ledger(args.full_paper_polisher_profile):
         cross_section_evidence_ledger = write_cross_section_evidence_ledger(run_dir, args)
     cross_review = write_cross_section_review(run_dir, args)
+    cross_review = apply_final_section_anchor_gate(run_dir, cross_review)
     cross_rounds = 1
     snapshot_cross_section_review(run_dir, 0)
     polish_records: list[dict[str, Any]] = []
     repair_records: list[dict[str, Any]] = []
-    for round_index in range(1, args.max_refiner_rounds + 1):
+    cross_repair_round_budget = effective_cross_repair_rounds(args)
+    for round_index in range(1, cross_repair_round_budget + 1):
         if section_score_gate(cross_review)["status"] == "passed":
             break
         if uses_targeted_cross_section_repair(args.full_paper_polisher_profile):
@@ -2085,6 +2691,7 @@ def run_real_sections(args: argparse.Namespace, run_dir: Path, slug: str, field:
         if uses_cross_section_evidence_ledger(args.full_paper_polisher_profile):
             cross_section_evidence_ledger = write_cross_section_evidence_ledger(run_dir, args)
         cross_review = write_cross_section_review(run_dir, args)
+        cross_review = apply_final_section_anchor_gate(run_dir, cross_review)
         snapshot_cross_section_review(run_dir, round_index)
         cross_rounds += 1
     final_path = assemble_final(run_dir)
@@ -2104,6 +2711,8 @@ def run_real_sections(args: argparse.Namespace, run_dir: Path, slug: str, field:
                 section: value.get("source_status_path")
                 for section, value in records.items()
             },
+            "max_refiner_rounds": args.max_refiner_rounds,
+            "max_cross_repair_rounds": cross_repair_round_budget,
             "cross_section_review_rounds": cross_rounds,
             "cross_section_evidence_ledger": (
                 "audits/cross_section_evidence_ledger.yaml"
@@ -2164,6 +2773,12 @@ def main(argv: list[str] | None = None) -> int:
         default="v2_4",
     )
     parser.add_argument("--max-refiner-rounds", type=int, default=2)
+    parser.add_argument(
+        "--max-cross-repair-rounds",
+        type=int,
+        default=None,
+        help="Optional full-paper cross-section repair round budget. Defaults to --max-refiner-rounds.",
+    )
     parser.add_argument("--api-timeout", type=int, default=900)
     parser.add_argument("--api-max-tokens", type=int, default=16000)
     parser.add_argument("--codex-timeout", type=int, default=1800)

@@ -21,6 +21,7 @@ from nature_orchestrator.context import build_context, write_context_pack  # noq
 from nature_orchestrator.agents import AgentResult, ApiConfig, api_config_from_env, run_agent  # noqa: E402
 from nature_orchestrator.io import write_text, write_yaml  # noqa: E402
 from nature_orchestrator.loader import load_task  # noqa: E402
+from nature_orchestrator.review_validation import final_text_quote_issues  # noqa: E402
 
 
 DEFAULT_TASKS_ROOT = ROOT.parent / "nature-bench" / "data" / "downloads"
@@ -419,6 +420,8 @@ def write_abstract_intro_prompt_pack(
     ]
     if (run_dir / "paper" / "story" / "paper_story_contract.yaml").exists():
         allowed_files.append("paper/story/paper_story_contract.yaml")
+    if (run_dir / "paper" / "evidence" / "evidence_claim_ledger.yaml").exists():
+        allowed_files.append("paper/evidence/evidence_claim_ledger.yaml")
     write_yaml(run_dir / "prompt_pack" / "allowed_files.yaml", {"allowed_files": allowed_files})
     write_yaml(run_dir / "prompt_pack" / "forbidden_files.yaml", spec.raw.get("forbidden_context") or {})
     write_text(run_dir / "prompt_pack" / "writer_prompt.md", (run_dir / "skill" / "prompts" / "writer_prompt.md").read_text(encoding="utf-8"))
@@ -456,6 +459,14 @@ def copy_paper_story_contract(run_dir: Path, source: Path | None) -> None:
     if source is None or not source.exists() or not source.is_file():
         return
     target = run_dir / "paper" / "story" / "paper_story_contract.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+
+
+def copy_paper_evidence_ledger(run_dir: Path, source: Path | None) -> None:
+    if source is None or not source.exists() or not source.is_file():
+        return
+    target = run_dir / "paper" / "evidence" / "evidence_claim_ledger.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
 
@@ -650,6 +661,7 @@ Use the skill files under `skill/` as writing-pattern guidance only; do not trea
 
 Read:
 - `paper/story/paper_story_contract.yaml` if present. Treat it as a soft paper-level contract: use its selected manuscript route, section role and claim boundaries as prior context, but report corrections in `paper_contract_alignment` if the Abstract+Introduction opening story needs a narrower or clearer framing.
+- `paper/evidence/evidence_claim_ledger.yaml` if present. Treat it as the evidence-confidence ledger; Abstract and Introduction may motivate and compress, but cannot upgrade low-confidence or VLM-only observations into definite paper claims.
 - `skill/prompts/story_blueprint_prompt.md`
 - `skill/patterns/abstract_patterns.md`
 - `skill/patterns/intro_gap_ladders.md`
@@ -926,6 +938,14 @@ Preserve supported quantitative evidence, causal direction, comparator language
 and the selected central story. If `story/story_contract.yaml` exists, follow its
 evidence hierarchy and figure-writing actions; do not re-expand omitted/deferred
 anchors unless the reviewer explicitly identifies a story-level failure.
+If the review lists `missing_recoverable_anchors`, `required_revisions`,
+`payoff_anchor_audit.missing`, or medium/high `safe_underclaiming_risk`, treat
+each high/moderate/high-impact item as mandatory. Repair all named missing
+scope, comparator and payoff anchors in final prose unless doing so would create
+an unsupported numeric/claim-safety gate failure. Do not fix only the first
+anchor and leave the remaining reviewer-required anchors unresolved.
+In `revisions/refine_round_{round_index:03d}.md`, list each reviewer-required
+anchor and whether it was added, softened, or omitted with a gate-safety reason.
 Do not inspect forbidden paths. Do not use oracle files.
 
 Write:
@@ -984,6 +1004,7 @@ def abstract_intro_role_allowed(role: str, round_index: int = 0) -> list[str]:
         "context_pack/context.yaml",
         "context_pack/evidence_manifest.yaml",
         "paper/story/paper_story_contract.yaml",
+        "paper/evidence/evidence_claim_ledger.yaml",
         "skill/rubrics/abstract_intro_rubric.yaml",
     ]
     patterns = [
@@ -1133,7 +1154,11 @@ def safe_underclaiming_risk_level(review: dict[str, Any]) -> str:
     return str(risk or "").strip().lower()
 
 
-def reviewer_acceptance_gate(review: dict[str, Any], require_payoff_audit: bool = False) -> dict[str, Any]:
+def reviewer_acceptance_gate(
+    review: dict[str, Any],
+    require_payoff_audit: bool = False,
+    final_text: str = "",
+) -> dict[str, Any]:
     issues: list[str] = []
     status = review.get("status")
     if status not in {"pass", "revise", "fail"}:
@@ -1166,6 +1191,7 @@ def reviewer_acceptance_gate(review: dict[str, Any], require_payoff_audit: bool 
             issues.append("safe_underclaiming_risk must be low, medium, or high")
         if status == "pass" and payoff_audit_has_missing_or_underclaimed_anchor(review):
             issues.append("pass review cannot omit high-impact payoff anchors or carry medium/high safe_underclaiming_risk")
+    issues.extend(final_text_quote_issues(review, final_text, label="final Abstract+Introduction"))
     return {
         "schema_version": "nature_orchestrator.reviewer_acceptance_gate.v1",
         "status": "passed" if not issues else "failed",
@@ -1182,8 +1208,13 @@ def is_schema_only_reviewer_gate_failure(report: dict[str, Any]) -> bool:
         "score must be between 1 and 5:",
         "accepted_by_reviewers must be boolean",
         "status must be pass, revise, or fail",
+        "$.",
     )
-    return all(any(str(issue).startswith(prefix) for prefix in schema_prefixes) for issue in issues)
+    return all(
+        any(str(issue).startswith(prefix) for prefix in schema_prefixes)
+        and ("final_text_quote" in str(issue) or not str(issue).startswith("$."))
+        for issue in issues
+    )
 
 
 def evidence_anchor_gate(generated: str, manifest: dict[str, Any], context_text: str) -> dict[str, Any]:
@@ -1338,7 +1369,8 @@ def draft_gates_pass(run_dir: Path, task: AbstractIntroTask, round_index: int) -
 
 
 def reviewer_gate_pass(run_dir: Path, review: dict[str, Any], round_index: int, require_payoff_audit: bool = False) -> tuple[bool, list[str]]:
-    report = reviewer_acceptance_gate(review, require_payoff_audit=require_payoff_audit)
+    final_text = read_text_if_exists(run_dir / "final" / "abstract_intro.tex")
+    report = reviewer_acceptance_gate(review, require_payoff_audit=require_payoff_audit, final_text=final_text)
     write_gate_report(run_dir, "reviewer_acceptance_gate", round_index, report)
     return report["status"] == "passed", ([] if report["status"] == "passed" else ["reviewer_acceptance_gate"])
 
@@ -1459,8 +1491,10 @@ def run_task(
     agent_backend: str = "codex",
     api_config: ApiConfig | None = None,
     paper_story_contract: Path | None = None,
+    paper_evidence_ledger: Path | None = None,
 ) -> dict[str, Any]:
     copy_paper_story_contract(run_dir, paper_story_contract)
+    copy_paper_evidence_ledger(run_dir, paper_evidence_ledger)
     write_abstract_intro_prompt_pack(run_dir, task, skill, image_mode=image_mode)
     record: dict[str, Any] = {
         "slug": task.slug,
@@ -1925,6 +1959,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shard-summary", action="store_true", help="Write summary_<slug>.yaml instead of shared summary.yaml for parallel one-slug workers.")
     parser.add_argument("--aggregate-only", action="store_true", help="Only aggregate existing status.yaml files into summary.yaml and comparison_report.md.")
     parser.add_argument("--paper-story-contract", type=Path, default=None)
+    parser.add_argument("--paper-evidence-ledger", type=Path, default=None)
     parser.add_argument("--quiet-progress", action="store_true")
     return parser.parse_args()
 
@@ -1977,6 +2012,7 @@ def main() -> int:
                 agent_backend=args.agent_backend,
                 api_config=api_cfg,
                 paper_story_contract=args.paper_story_contract,
+                paper_evidence_ledger=args.paper_evidence_ledger,
             )
         if record["status"] in {"prepared", "done"}:
             completed += 1
